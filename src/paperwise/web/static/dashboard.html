@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PaperWise 评估 Dashboard</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--dim:#8b949e;--blue:#58a6ff;--green:#3fb950;--orange:#d2991d;--red:#f85149}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);padding:24px}
+h1{color:var(--blue);margin-bottom:8px;font-size:22px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin-bottom:10px;color:var(--blue)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:12px}
+.stat{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px}
+.stat .label{font-size:12px;color:var(--dim)}
+.stat .value{font-size:20px;font-weight:600;margin-top:4px}
+.bar-wrap{background:var(--bg);border:1px solid var(--border);border-radius:6px;height:10px;overflow:hidden;margin-top:6px}
+.bar{height:100%;background:var(--blue);border-radius:6px}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th,.table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left}
+.table th{color:var(--dim);font-weight:500}
+.pass{color:var(--green)}.fail{color:var(--red)}
+</style>
+</head>
+<body>
+  <h1>📊 PaperWise 评估 Dashboard</h1>
+  <div class="sub">Agent 能力测试历史：Pass@k / Pass^k / 成功率 / 幻觉率</div>
+  <div id="content"><p style="color:var(--dim)">加载中...</p></div>
+
+<script>
+async function load() {
+  try {
+    const r = await fetch('/api/eval/results');
+    const d = await r.json();
+    const runs = d.runs || [];
+    const box = document.getElementById('content');
+    if (!runs.length) { box.innerHTML = '<p style="color:var(--dim)">暂无测试结果。运行 <code>python tests/run_agent_tests.py --k 3</code> 生成。</p>'; return; }
+    box.innerHTML = runs.map(run => {
+      const overall = run.overall || {};
+      const pAtK = (overall.pass_at_k || 0) * 100;
+      const pK = (overall.pass_consecutive_k || 0) * 100;
+      const success = (overall.success_rate || 0) * 100;
+      const scenarios = Object.entries(run.pass_at_k || {});
+      return `<div class="card">
+        <h2>${run.paper_title ? run.paper_title.slice(0, 55) : run.paper || '测试'} · k=${run.k || 1}</h2>
+        <div class="sub">${run.model} · ${run.paper || ''} · ${run.timestamp || run.file || ''}</div>
+        <div class="grid">
+          <div class="stat"><div class="label">Pass@${run.k || 1}</div><div class="value" style="color:var(--green)">${pAtK.toFixed(1)}%</div>
+            <div class="bar-wrap"><div class="bar" style="width:${pAtK}%;background:var(--green)"></div></div></div>
+          <div class="stat"><div class="label">Pass^${run.k || 1}</div><div class="value" style="color:var(--blue)">${pK.toFixed(1)}%</div>
+            <div class="bar-wrap"><div class="bar" style="width:${pK}%"></div></div></div>
+          <div class="stat"><div class="label">单次成功率</div><div class="value">${success.toFixed(1)}%</div>
+            <div class="bar-wrap"><div class="bar" style="width:${success}%;background:var(--orange)"></div></div></div>
+          <div class="stat"><div class="label">通过 / 总数</div><div class="value">${run.passed}/${run.total_tests}</div></div>
+        </div>
+        ${scenarios.length ? `<table class="table"><tr><th>场景</th><th>Pass@${run.k}</th><th>Pass^${run.k}</th><th>成功率</th><th>运行数</th></tr>
+          ${scenarios.map(([name, m]) => `<tr><td>${name}</td><td>${((m.pass_at_k||0)*100).toFixed(0)}%</td><td>${((m.pass_consecutive_k||0)*100).toFixed(0)}%</td><td>${((m.success_rate||0)*100).toFixed(0)}%</td><td>${m.runs||0}</td></tr>`).join('')}
+        </table>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('content').innerHTML = '<p style="color:var(--red)">加载失败</p>';
+  }
+}
+load();
+</script>
+</body>
+</html>

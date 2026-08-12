@@ -105,6 +105,8 @@ body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;backgroun
     <span style="font-size:12px;color:var(--dim)" id="paperLabel"></span>
     <span style="flex:1"></span>
     <button class="btn btn-outline btn-small" onclick="toggleReport()">📝 报告面板</button>
+    <button class="btn btn-outline btn-small" onclick="toggleEditor()">✏️ 编辑章节</button>
+    <button class="btn btn-outline btn-small" onclick="toggleMemory()">🧠 记忆</button>
     <button class="btn btn-outline btn-small" onclick="generatePPTX()">📊 生成 PPT</button>
   </div>
 
@@ -144,6 +146,23 @@ body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;backgroun
 <div class="report-panel" id="reportPanel">
   <h3>📝 报告内容</h3>
   <div id="reportContent" style="font-size:13px;line-height:1.8"></div>
+</div>
+
+<!-- Memory Panel -->
+<div class="report-panel" id="memoryPanel">
+  <h3>🧠 用户记忆 <button class="btn btn-small btn-outline" style="float:right" onclick="refreshMemory()">刷新</button></h3>
+  <div id="memoryList" style="font-size:13px"></div>
+</div>
+
+<!-- Section Editor Panel -->
+<div class="report-panel" id="editorPanel">
+  <h3>✏️ 章节编辑</h3>
+  <select id="sectionSelect" style="width:100%;margin-bottom:8px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px" onchange="selectSection()"></select>
+  <textarea id="sectionText" style="width:100%;height:250px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;font-family:monospace"></textarea>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button class="btn btn-small btn-outline" style="flex:1" onclick="saveSection(false)">保存</button>
+    <button class="btn btn-small btn-primary" style="flex:1" onclick="saveSection(true)">保存并生成 PPT</button>
+  </div>
 </div>
 
 <div class="toasts" id="toasts"></div>
@@ -228,7 +247,8 @@ async function handleFile(input) {
     const r = await fetch(`/api/sessions/${sid}/upload`, {method:'POST', body:fd});
     const d = await r.json();
     removeTyping();
-    paperDir = d.paper_loaded;
+    paperDir = d.paper_dir || true;
+    document.getElementById('paperLabel').textContent = `📄 ${file.name}`;
     addMessage('assistant', d.response);
   } catch(e) {
     removeTyping();
@@ -309,6 +329,86 @@ function toggleReport() {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
   }
+}
+
+// ═══════════ 记忆管理 ═══════════
+function closeOtherPanels(keep) {
+  for (const id of ['reportPanel', 'memoryPanel', 'editorPanel']) {
+    if (id !== keep) document.getElementById(id).classList.remove('show');
+  }
+}
+async function toggleMemory() {
+  const p = document.getElementById('memoryPanel');
+  closeOtherPanels('memoryPanel');
+  p.classList.toggle('show');
+  if (p.classList.contains('show')) await refreshMemory();
+}
+async function refreshMemory() {
+  const list = document.getElementById('memoryList');
+  try {
+    const r = await fetch('/api/memory');
+    const d = await r.json();
+    const cards = d.cards || [];
+    list.innerHTML = cards.length ? '' : '<p style="color:var(--dim)">暂无记忆</p>';
+    for (const c of cards) {
+      const div = document.createElement('div');
+      div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px';
+      const dataStr = Object.entries(c.data || {}).map(([k, v]) => `${k}: ${v}`).join('; ').slice(0, 140);
+      div.innerHTML = `<div style="color:var(--blue);font-weight:600">${c.category} · ${Math.round((c.confidence || 0) * 100)}%</div>
+        <div style="margin:4px 0">${dataStr}</div>
+        <div style="color:var(--dim)">${c.backstory || ''}</div>
+        <button class="btn btn-small" style="margin-top:6px" onclick="deleteMemoryCard('${c.card_id}')">删除</button>`;
+      list.appendChild(div);
+    }
+  } catch(_) { list.innerHTML = '<p style="color:var(--dim)">加载失败</p>'; }
+}
+async function deleteMemoryCard(id) {
+  await fetch(`/api/memory/${id}`, {method:'DELETE'});
+  refreshMemory();
+}
+
+// ═══════════ 章节编辑 ═══════════
+async function toggleEditor() {
+  if (!paperDir || paperDir === true) { toast('请先上传并解析论文'); return; }
+  const p = document.getElementById('editorPanel');
+  closeOtherPanels('editorPanel');
+  p.classList.toggle('show');
+  if (p.classList.contains('show')) await loadSections();
+}
+async function loadSections() {
+  try {
+    const r = await fetch(`/api/paper/sections?paper_dir=${encodeURIComponent(paperDir)}`);
+    const d = await r.json();
+    window.__sections = d.sections || {};
+    const sel = document.getElementById('sectionSelect');
+    sel.innerHTML = '';
+    const names = {overview:'概览', motivation:'动机', methodology:'方法', experiments:'实验',
+                   critical_analysis:'批判分析', related_work:'相关工作', conclusion:'结论'};
+    for (const sec of Object.keys(window.__sections)) {
+      const opt = document.createElement('option');
+      opt.value = sec; opt.textContent = names[sec] || sec;
+      sel.appendChild(opt);
+    }
+    if (sel.options.length) selectSection();
+    else document.getElementById('sectionText').value = '（暂无章节内容，请先生成报告）';
+  } catch(_) { toast('加载章节失败'); }
+}
+function selectSection() {
+  const sec = document.getElementById('sectionSelect').value;
+  document.getElementById('sectionText').value =
+    (window.__sections && window.__sections[sec]) || '';
+}
+async function saveSection(regenerate) {
+  const sec = document.getElementById('sectionSelect').value;
+  const content = document.getElementById('sectionText').value;
+  if (!sec) { toast('请先选择章节'); return; }
+  try {
+    const r = await fetch('/api/paper/sections', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({paper_dir: paperDir, section: sec, content})});
+    if (!r.ok) { toast('保存失败'); return; }
+    toast('章节已保存');
+    if (regenerate) generatePPTX();
+  } catch(_) { toast('保存失败'); }
 }
 
 // ═══════════ Session 管理 ═══════════

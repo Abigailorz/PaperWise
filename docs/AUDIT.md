@@ -11,8 +11,8 @@
 | 严重级别 | 总计 | 已修复 | 剩余 | 状态 |
 |----------|------|--------|------|------|
 | CRITICAL | 12 | **12** | **0** | ✅ 全部清除 |
-| HIGH | 20 | 15 | 5 | 核心已修复 |
-| MEDIUM | 16 | 5 | 11 | 持续优化中 |
+| HIGH | 20 | 17 | 3 | 核心已修复 |
+| MEDIUM | 16 | 10 | 6 | 持续优化中 |
 | LOW | 8 | 2 | 6 | 低优先级 |
 
 **CRITICAL 全部清除** — 无安全漏洞、无假实现、无核心功能缺失。
@@ -93,6 +93,7 @@
 - ✅ 技能：skill_list / skill_load（渐进披露）/ discover_tool（动态工具发现）
 - ✅ 协作：spawn_subagent（真实 Agent）/ send_message_to_agent / receive_message（AgentBus 邮箱）
 - ✅ 事件：set_timer / monitor_shell（真实进程管理）
+- ✅ 主动调度器：`core/scheduler.py` 系统级定时器/监控事件注入会话
 - ✅ 沟通：ask_user / notify_user
 
 ### 4.2 工具安全
@@ -107,7 +108,9 @@
 
 ### 4.3 Sidecar 安全审查
 
-- ❌ 无独立安全审查模型（仅规则式检查）（HIGH-6 / MEDIUM-7）
+- ✅ `harness/sidecar.py`：LLM 驱动的提示注入分类器（间接注入检测），
+  论文摄入时自动审查，medium/high 注入注入 `<injection_warning>` 并拒绝执行
+- ⚠️ Sidecar 仅覆盖论文摄入，工具输出等场景尚未接入（后续扩展）
 
 ---
 
@@ -120,6 +123,7 @@
 ### 5.2 代码作为生成式 UI
 
 - ⚠️ Web UI 为预写静态页面，Agent 不动态生成 UI（MEDIUM-3 / LOW-4）
+- ✅ 记忆管理面板（查看/删除记忆卡）+ 章节编辑面板（编辑后重新生成 PPT）
 
 ### 5.3 Agent 自举
 
@@ -135,6 +139,7 @@
 - ✅ PassKEvaluator：k 次重复 + Pass@k / Pass^k / 工具有效率 / 幻觉率
 - ✅ `tests/run_agent_tests.py` 已接入 `--k` 重复 + Pass@k/Pass^k 输出
 - ✅ 测试数据集扩展：GNN + CV 两篇论文 × 5 场景
+- ✅ 评估 Dashboard：`/dashboard` 页面 + `GET /api/eval/results` 可视化历史结果
 
 ### 6.2 消融与 A/B
 
@@ -172,6 +177,15 @@
 
 ---
 
+## 产品化功能（v0.4.1 追加）
+
+- ✅ arXiv 摄入：`POST /api/sessions/{sid}/arxiv` + `paperwise fetch-arxiv <id>`
+- ✅ 用户数据隔离：`X-User-Id` 头 → memory/kb 独立命名空间
+- ✅ 评估 Dashboard：`/dashboard`（Pass@k / Pass^k / 成功率可视化）
+- ✅ 主动定时提醒：`POST /api/sessions/{sid}/timer`（到期注入会话 + 广播）
+
+---
+
 ## 第 9 章：多模态与实时交互
 
 - ❌ 语音 Agent / Computer Use / 机器人操作（LOW-1/2，不在 Phase 1 范围）
@@ -180,17 +194,22 @@
 
 ## 遗留问题清单
 
-### HIGH（5 项剩余）
+### HIGH（3 项剩余）
 
 | # | 问题 | 位置 | 建议 |
 |---|------|------|------|
 | 1 | 进化无回归/灰度/回滚 | `evolution.py` | 候选更新先跑回归测试再部署 |
-| 2 | 无主动调度（事件工具无守护进程） | `tools/collab_tools.py` | 增加后台调度器驱动 set_timer/monitor_shell |
-| 3 | 提示注入无 LLM 级 Sidecar 审查 | `harness/security.py` | 高风险输入过 LLM 分类器 |
-| 4 | 无 A/B 测试与特性开关 | `config/settings.py` | 双层特性开关 |
-| 5 | 无对等辩论协作模式 | `agents/orchestrator.py` | 增加 Debate spec |
+| 2 | 无 A/B 测试与特性开关 | `config/settings.py` | 双层特性开关 |
+| 3 | 无对等辩论协作模式 | `agents/orchestrator.py` | 增加 Debate spec |
 
-### 本次已修复的 HIGH（9 项）
+### 本轮新增修复的 HIGH（2 项）
+
+1. ✅ 主动调度器（`core/scheduler.py`）：set_timer / monitor_shell 注册系统级
+   定时器与监控事件，到期后注入会话上下文并 WebSocket 广播
+2. ✅ LLM Sidecar 提示注入审查（`harness/sidecar.py`）：论文摄入时自动分类
+   间接注入，medium/high 注入注入 `<injection_warning>` 并保持数据隔离
+
+### 此前已修复的 HIGH（15 项）
 
 1. ✅ `run_agent_tests` 接入 `--k` 重复 + Pass@k / Pass^k 输出 + 双论文数据集
 2. ✅ 审核结果回流修正报告（revise-until-pass，≤3 轮，`review/review_record.json`）
@@ -202,7 +221,7 @@
 8. ✅ RAPTOR / GraphRAG 索引持久化（签名缓存，避免重复 LLM 调用）
 9. ✅ 记忆整合自动化（`consolidate` + 周期触发）
 
-### MEDIUM（11 项）
+### MEDIUM（6 项剩余）
 
 1. 状态栏缺异常操作提醒与侧信道信息
 2. 无睡眠学习机制
@@ -210,11 +229,14 @@
 4. Agent 自举受限（不能动态创建工具）
 5. 无去中心化协作拓扑
 6. 无错误级联追踪
-7. 安全检查仍为规则级（无 LLM 兜底）
-8. Web UI 无 PPT 预览/编辑
-9. 无 arXiv URL 摄入
-10. 记忆隐私分级无管理 UI
-11. 无用户系统/多租户
+
+### 本轮新增修复的 MEDIUM（5 项）
+
+1. ✅ LLM 级安全兜底（Sidecar 注入审查）
+2. ✅ Web UI 章节编辑 + 保存后重新生成 PPT
+3. ✅ arXiv URL 摄入
+4. ✅ 记忆管理 UI（查看/删除记忆卡）
+5. ✅ 用户数据隔离基础（X-User-Id → memory/kb 命名空间；完整认证后续）
 
 ### LOW（6 项）
 

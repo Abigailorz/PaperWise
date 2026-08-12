@@ -1,7 +1,6 @@
 """会话恢复 API 测试"""
 
 import pytest
-from fastapi.testclient import TestClient
 from pathlib import Path
 
 from paperwise.api.server import app
@@ -14,15 +13,6 @@ from paperwise.tools.registry import ToolRegistry
 class DummyLLM:
     async def chat_stream(self, **kwargs):
         yield type("Event", (), {"type": "done"})()
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    import paperwise.config.settings as settings_mod
-    ws = tmp_path / "ws"
-    monkeypatch.setenv("PAPERWISE_WORKSPACE", str(ws))
-    settings_mod._settings = None  # 强制重新加载（环境变量优先于 .env）
-    return TestClient(app)
 
 
 def test_sessions_list_roundtrip(client, tmp_path):

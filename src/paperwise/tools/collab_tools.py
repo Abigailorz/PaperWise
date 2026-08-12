@@ -243,6 +243,20 @@ class SetTimerTool(BaseTool):
         )
 
     async def execute(self, seconds: int, message: str) -> str:
+        # 优先注册到系统调度器（主动服务：到期后注入会话 + 广播）
+        scheduler = getattr(self, "_scheduler", None)
+        session_id = getattr(self, "_session_id", "")
+        if scheduler is not None:
+            timer_id = scheduler.add_timer(
+                seconds, message, session_id,
+                callback=getattr(self, "_scheduler_callback", None),
+            )
+            return (
+                f"定时器已注册到系统调度器 (ID: {timer_id})："
+                f"{seconds}s 后触发 — {message}"
+            )
+
+        # 回退：进程内 asyncio 任务（无调度器环境）
         timer_id = uuid4().hex[:8]
         async def _fire():
             await asyncio.sleep(seconds)
@@ -301,6 +315,17 @@ class MonitorShellTool(BaseTool):
             )
             self._tasks[task_id] = proc
 
+            # 注册到系统调度器（完成后触发主动通知）
+            scheduler = getattr(self, "_scheduler", None)
+            session_id = getattr(self, "_session_id", "")
+            if scheduler is not None:
+                scheduler.add_monitor(
+                    message=f"后台任务完成: {command[:80]}",
+                    session_id=session_id,
+                    task_id=task_id,
+                    callback=getattr(self, "_scheduler_callback", None),
+                )
+
             # 启动后台监控
             async def _monitor():
                 try:
@@ -311,10 +336,16 @@ class MonitorShellTool(BaseTool):
                     if stderr:
                         output += "\n[stderr]\n" + (stderr or b"").decode("utf-8", errors="replace")[:500]
                     self._tasks[task_id] = output  # 替换为结果字符串
+                    if scheduler is not None:
+                        scheduler.fire_monitor(task_id, output)
                 except asyncio.TimeoutError:
                     self._tasks[task_id] = "[超时] 任务执行超过 1 小时"
+                    if scheduler is not None:
+                        scheduler.fire_monitor(task_id, "[超时] 任务执行超过 1 小时")
                 except Exception as e:
                     self._tasks[task_id] = f"[错误] {e}"
+                    if scheduler is not None:
+                        scheduler.fire_monitor(task_id, f"[错误] {e}")
 
             asyncio.create_task(_monitor())
 

@@ -280,6 +280,35 @@ def pipeline(
 
 
 @app.command()
+def fetch_arxiv(
+    arxiv_id: str = typer.Argument(..., help="arXiv ID 或 URL，如 2401.12345"),
+    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o",
+                                               help="下载目录（默认 workspace/arxiv）"),
+):
+    """从 arXiv 下载论文 PDF"""
+    from paperwise.config.settings import get_settings
+    from paperwise.parsers.arxiv import extract_arxiv_id, download_arxiv_pdf
+
+    console.print(Panel(f"Fetching arXiv: [bold]{arxiv_id}[/bold]", title="PaperWise Fetch"))
+
+    async def run_fetch():
+        aid = extract_arxiv_id(arxiv_id)
+        if not aid:
+            console.print(f"[red]✗ 无法识别 arXiv ID: {arxiv_id}[/red]")
+            raise typer.Exit(code=1)
+        dest_dir = output_dir or (get_settings().workspace_dir / "arxiv")
+        console.print(f"[cyan]→[/cyan] Downloading https://arxiv.org/pdf/{aid} ...")
+        path = await download_arxiv_pdf(aid, dest_dir)
+        console.print(f"[green]✓[/green] Saved to {path}")
+
+    try:
+        asyncio.run(run_fetch())
+    except Exception as e:
+        console.print(f"[red]✗ Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def generate(
     target: str = typer.Argument(..., help="生成目标: pptx"),
     paper_dir: Path = typer.Argument(..., help="解析后的论文目录"),

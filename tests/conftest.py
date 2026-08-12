@@ -3,6 +3,8 @@
 import pytest
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
@@ -85,3 +87,17 @@ model based entirely on attention.
 [1] Bahdanau et al. Neural Machine Translation by Jointly Learning to Align and Translate. 2014.
 [2] Vaswani et al. Attention Is All You Need. 2017.
 """
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    """FastAPI TestClient，工作区指向临时目录（环境变量优先于 .env）。"""
+    import paperwise.config.settings as settings_mod
+    import paperwise.core.scheduler as scheduler_mod
+    from paperwise.api.server import app
+    ws = tmp_path / "ws"
+    monkeypatch.setenv("PAPERWISE_WORKSPACE", str(ws))
+    settings_mod._settings = None  # 强制重新加载
+    # 每个测试独立的调度器实例（避免跨事件循环的 stop 挂起）
+    scheduler_mod.Scheduler._instance = None
+    return TestClient(app)

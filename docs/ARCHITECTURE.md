@@ -1,7 +1,7 @@
 # PaperWise 完整架构文档 v0.4.1
 
 > 基于《深入理解 AI Agent：设计原理与工程实践》（李博杰 著, v1.4）全书知识体系
-> 审计达标：CRITICAL 0 降级 / HIGH 15/20 已修复 / MEDIUM 5/16 已修复 / LOW 2/8 已修复
+> 审计达标：CRITICAL 0 降级 / HIGH 17/20 已修复 / MEDIUM 10/16 已修复 / LOW 2/8 已修复
 
 ---
 
@@ -23,11 +23,11 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 
 | 指标 | 值 |
 |------|-----|
-| Python 文件 | 52 个 |
-| 代码行数 | ~8,100 行 |
+| Python 文件 | 55 个 |
+| 代码行数 | ~8,600 行 |
 | 工具数量 | 17 个（五类全覆盖） |
 | Agent Skills | 3 个（学术阅读/报告生成/验证） |
-| 单元测试 | 38 个 |
+| 单元测试 | 54 个 |
 | 支持 LLM | DeepSeek / Kimi K3 / OpenAI / 任意兼容 API |
 | CRITICAL 降级 | 0（全部修复） |
 
@@ -70,12 +70,13 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 │           事件: set_timer, monitor_shell                 │
 │           沟通: ask_user, notify_user                    │
 ├──────────────────────────────────────────────────────┤
-│ 能力层    LLM客户端 │ PDF解析 │ RAG知识库 │ 用户记忆 │ 进化引擎 │
+│ 能力层    LLM客户端 │ PDF解析 │ RAG知识库 │ 用户记忆 │ 进化引擎 │ 调度器 │
 │           ├─ OpenAI 兼容 + 流式                          │
 │           ├─ PyMuPDF (文本/图表/表格/公式)               │
 │           ├─ Dense+Sparse+RRF+Rerank+HyDE+RAPTOR+GraphRAG │
 │           ├─ Advanced JSON Cards + LLM提取 + 去重合并    │
-│           └─ 轨迹→模式→部署闭环                          │
+│           ├─ 轨迹→模式→部署闭环                          │
+│           └─ 主动调度器 (定时器/监控事件 → 会话注入)      │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -328,8 +329,8 @@ PAPERWISE_EMBEDDING_MODEL=text-embedding-3-small
 | 严重级别 | 总计 | 已修复 | 剩余 | 状态 |
 |----------|------|--------|------|------|
 | CRITICAL | 12 | 12 | 0 | ✅ 全部清除 |
-| HIGH | 20 | 15 | 5 | 核心已修复 |
-| MEDIUM | 16 | 5 | 11 | 持续优化中 |
+| HIGH | 20 | 17 | 3 | 核心已修复 |
+| MEDIUM | 16 | 10 | 6 | 持续优化中 |
 | LOW | 8 | 2 | 6 | 低优先级 |
 
 **CRITICAL 全部清除** — 无安全漏洞、无假实现、无核心功能缺失。

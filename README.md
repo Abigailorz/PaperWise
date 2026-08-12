@@ -23,7 +23,7 @@ paperwise generate pptx workspace/{paper}/     # 生成 PPT
 paperwise evaluate report.md workspace/{paper}/ # 评估质量
 
 # 4. 运行测试
-pytest tests/ -v                               # 38 个单元测试
+pytest tests/ -v                               # 54 个单元测试
 python tests/run_agent_tests.py                # Agent 能力测试
 ```
 
@@ -41,6 +41,11 @@ python tests/run_agent_tests.py                # Agent 能力测试
 3. **生成 PPT** — 点击按钮自动生成学术演示文稿
 4. **编辑报告** — 点击"编辑"修改报告内容
 5. **Agent 记住你** — 偏好和研究方向自动保存
+6. **记忆管理** — 侧边栏"记忆"面板可查看/删除用户记忆卡
+7. **章节编辑** — 直接编辑报告章节，保存后重新生成 PPT
+8. **arXiv 摄入** — `POST /api/sessions/{sid}/arxiv` 粘贴 arXiv 链接即可解析
+9. **主动提醒** — 定时器到期自动注入 Agent 上下文并广播
+10. **评估 Dashboard** — 打开 `http://localhost:8000/dashboard` 查看 Pass@k 趋势
 
 ## CLI 命令
 
@@ -59,13 +64,15 @@ paperwise generate pptx workspace/attention_is_all_you_need/
 
 # 评估质量
 paperwise evaluate workspace/{paper}/report/report.md workspace/{paper}/
+paperwise fetch-arxiv 2401.12345                  # 下载 arXiv 论文
+paperwise pipeline paper.pdf                      # 端到端流水线（含对抗式审核+修订）
 ```
 
 ## 项目结构
 
 ```
 PaperWise/
-├── src/paperwise/              ← 52 个 Python 文件 (~8100 行)
+├── src/paperwise/              ← 55 个 Python 文件 (~8600 行)
 │   ├── core/                   # Agent 核心 (ReAct, LLM客户端, Session)
 │   ├── harness/                # Harness 工程 (5层压缩, 3层护栏, 状态栏)
 │   ├── tools/                  # 17 工具五类 (感知/执行/协作/事件/沟通)
@@ -147,8 +154,8 @@ RAG: Dense + Sparse + RRF + Cross-Encoder + HyDE + RAPTOR + GraphRAG
 | 严重级别 | 总计 | 已修复 | 剩余 |
 |----------|------|--------|------|
 | CRITICAL | 12 | **12** | **0** |
-| HIGH | 20 | 15 | 5 |
-| MEDIUM | 16 | 5 | 11 |
+| HIGH | 20 | 17 | 3 |
+| MEDIUM | 16 | 10 | 6 |
 | LOW | 8 | 2 | 6 |
 
 > 完整审计报告：`docs/AUDIT.md` | 架构详解：`docs/ARCHITECTURE.md` | 设计评审：`docs/DESIGN-REVIEW.md`

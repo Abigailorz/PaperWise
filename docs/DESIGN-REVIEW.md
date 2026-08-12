@@ -88,14 +88,15 @@ PaperWise 的 Agent 设计已经具备一个生产级系统应有的骨架：
 `receive_message` 工具读取；orchestrator 与 spawn_subagent 均自动注册邮箱。
 文件系统仍作为产物交换通道，消息只承载控制信号。
 
-### 3.2 主动调度 — ⏳ 待实现
+### 3.2 主动调度 — ✅ 已实现（2026-08-12）
 
 **现状**：`set_timer` / `monitor_shell` 是 Agent 侧的"一次性"工具，
 没有系统级守护把它们转成持续的 Agent 输入。
 
-**方案**：`Scheduler` 后台任务（asyncio）持有定时器与监控项，
-到期时向活跃 Session 注入事件消息；这为"论文更新提醒、引用告警"等
-主动服务（spec S6.4）打基础。
+**已实现**：`core/scheduler.py` 系统级调度器（asyncio 后台轮询），
+`set_timer` / `monitor_shell` 注册后到期自动触发——事件既注入会话上下文
+（下一轮对话可见）又通过 WebSocket 广播；`POST /api/sessions/{sid}/timer`
+可从外部设置主动提醒。这为"论文更新提醒、引用告警"等主动服务（spec S6.4）打基础。
 
 ### 3.3 工具自发现 — ✅ 已实现（2026-08-12）
 
@@ -123,13 +124,15 @@ LLM 调用成本高，且只覆盖前 10 篇文档的前 2000 字符。
 （python3→python、ls→dir 等），并给 Agent 的 bash 工具描述注入
 "当前平台：Windows，避免使用 Unix 专属命令"的环境提示。
 
-### 3.6 提示注入的 LLM 级审查 — ⏳ 待实现
+### 3.6 提示注入的 LLM 级审查 — ✅ 已实现（2026-08-12）
 
 **现状**：规则级检测（正则）覆盖常见注入模式，但对
 "间接注入"（论文正文里委婉引导 Agent 的行为）无能为力。
 
-**方案**：对高风险输入（论文全文、外部网页）增加轻量 LLM 分类器做
-第二道审查（Sidecar）；规则优先拦截，LLM 兜底判断。
+**已实现**：`harness/sidecar.py` InjectionSidecar——论文摄入时用 LLM 分类器
+识别间接注入（委婉引导/伪指令），medium/high 时注入 `<injection_warning>`
+并保持数据隔离；规则引擎优先拦截，LLM 兜底判断。
+**待扩展**：把 Sidecar 接入工具输出等其他不可信来源。
 
 ### 3.7 多 Agent 文件冲突检测 — ✅ 已实现（2026-08-12）
 
@@ -143,12 +146,12 @@ LLM 调用成本高，且只覆盖前 10 篇文档的前 2000 字符。
 
 ## 4. P2 — 产品化与体验
 
-1. **Web UI 增强**：PPT 逐页预览/编辑、历史会话列表与恢复入口、记忆管理页
-2. **arXiv 摄入**：上传页支持粘贴 arXiv URL，服务端下载 + 解析
-3. **主动论文推荐**：落地 spec 中的 `daily_arxiv_check`，按用户研究方向推送论文
-4. **用户系统/多租户**：用户画像与记忆按 user_id 隔离（数据模型已支持）
-5. **多模态深度**：图表用视觉模型（如 Qwen-VL/CLIP）生成真正语义化描述并嵌入
-6. **评估 Dashboard**：把 Pass@k / 幻觉率 / Rubric 均分可视化，追踪版本间变化
+1. **Web UI 增强** — ✅ 历史会话恢复、记忆管理面板、章节编辑（保存后重新生成 PPT）已实现；PPT 逐页可视化预览待做
+2. **arXiv 摄入** — ✅ `POST /api/sessions/{sid}/arxiv` + `paperwise fetch-arxiv` 已实现；上传页 UI 入口待做
+3. **主动论文推荐** — ⏳ 落地 spec 中的 `daily_arxiv_check`，按用户研究方向推送论文
+4. **用户系统/多租户** — ✅ 用户数据隔离（X-User-Id → memory/kb 命名空间）已实现；完整认证/登录待做
+5. **多模态深度** — ⏳ 图表用视觉模型（如 Qwen-VL/CLIP）生成真正语义化描述并嵌入
+6. **评估 Dashboard** — ✅ `/dashboard` 页面（Pass@k / Pass^k / 成功率可视化）已实现
 
 ---
 
@@ -189,8 +192,9 @@ EvolutionEngine 能"改自己"，但没有回归测试和回滚——这在生�
 |------|------|------|
 | A（可靠性） | revise-until-pass、评估落地、Web 会话恢复、记忆整合 | ✅ 已完成 |
 | B（能力） | 消息总线、工具自发现、索引持久化、Windows 适配、文件锁 | ✅ 已完成 |
-| B+（能力） | 主动调度器、LLM Sidecar 审查 | ⏳ 下一轮 |
-| C（产品） | UI 增强、arXiv、用户系统、评估 Dashboard | ⏳ 后续 |
+| B+（能力） | 主动调度器、LLM Sidecar 审查 | ✅ 已完成 |
+| C（产品） | UI 增强、arXiv、用户隔离、评估 Dashboard | ✅ 基础版完成 |
+| D（深化） | 主动论文推荐、PPT 可视化预览、完整认证、多模态深度 | ⏳ 后续 |
 
 > 与 `docs/AUDIT.md` 的遗留项一一对应：P0 覆盖 HIGH-1/2/8/14，
 > P1 覆盖 HIGH-3/4/5/6/7/10/12/13，P2 覆盖 MEDIUM/LOW 多数条目。

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,11 +22,14 @@ WEB_STATIC = ROOT / "src" / "paperwise" / "web" / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """应用生命周期：启动后台周期任务，关闭时清理。"""
+    from paperwise.core.scheduler import Scheduler
+    Scheduler.instance().start()
     task = asyncio.create_task(_periodic_flush())
     try:
         yield
     finally:
         task.cancel()
+        await Scheduler.instance().stop()
 
 
 app = FastAPI(title="PaperWise API", version="0.4.1", lifespan=lifespan)
@@ -39,6 +42,37 @@ ws_buffer: dict[str, list[str]] = {}
 pending_access: dict[str, asyncio.Future] = {}  # request_id → Future[bool]
 
 
+def _fire_scheduler_event(sid: str, event: dict) -> None:
+    """调度器事件 → WebSocket 广播 + 注入会话上下文（主动服务）。
+
+    事件会作为 user 消息追加到会话末尾，Agent 下一轮对话即可感知。
+    """
+    try:
+        asyncio.create_task(_broadcast(sid, "system_event", json.dumps({
+            "type": event.get("type", "timer"),
+            "message": event.get("message", ""),
+        }, ensure_ascii=False)))
+    except Exception:
+        pass
+
+    from paperwise.core.types import Message, Role
+    active = sessions.get(sid)
+    if active is not None:
+        try:
+            active.state.messages.append(Message(
+                role=Role.USER,
+                content=(
+                    "<system_event>\n"
+                    f"你收到一个主动事件（{event.get('type', 'timer')}）："
+                    f"{event.get('message', '')}\n"
+                    "如果该事件与当前任务相关，请主动处理并告知用户。"
+                    "</system_event>"
+                ),
+            ))
+        except Exception:
+            pass
+
+
 # ═══════════ REST API ═══════════
 
 @app.get("/api/health")
@@ -47,11 +81,12 @@ async def health():
 
 
 @app.post("/api/sessions")
-async def create_session():
-    """创建新的对话 Session"""
+async def create_session(request: Request):
+    """创建新的对话 Session（X-User-Id 头用于用户数据隔离）"""
     tid = uuid.uuid4().hex[:8]
+    user_id = request.headers.get("X-User-Id", "default")
     sessions[tid] = None  # 延迟初始化（等第一个消息或文件上传）
-    return {"session_id": tid, "status": "created"}
+    return {"session_id": tid, "user_id": user_id, "status": "created"}
 
 
 @app.get("/api/sessions")
@@ -86,7 +121,7 @@ async def list_sessions():
 
 
 @app.post("/api/sessions/{sid}/upload")
-async def upload_paper(sid: str, file: UploadFile = File(...)):
+async def upload_paper(sid: str, request: Request, file: UploadFile = File(...)):
     """在 Session 中上传论文"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(400, "仅支持 PDF 文件")
@@ -101,16 +136,47 @@ async def upload_paper(sid: str, file: UploadFile = File(...)):
     pdf_path.write_bytes(await file.read())
 
     # 初始化 Session
-    session = await _ensure_session(sid, ws_dir / f"session_{sid}")
+    user_id = request.headers.get("X-User-Id", "default")
+    session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
 
     # 让 Agent 处理论文
     response = await session.handle_file_upload(pdf_path)
 
-    return {"session_id": sid, "response": response, "paper_loaded": True}
+    return {
+        "session_id": sid,
+        "response": response,
+        "paper_loaded": True,
+        "paper_dir": session.state.current_paper,
+    }
+
+
+@app.post("/api/sessions/{sid}/arxiv")
+async def ingest_arxiv(sid: str, request: Request, payload: dict):
+    """通过 arXiv URL / ID 摄入论文。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.parsers.arxiv import extract_arxiv_id, download_arxiv_pdf
+
+    url = str(payload.get("url", ""))
+    arxiv_id = extract_arxiv_id(url)
+    if not arxiv_id:
+        raise HTTPException(400, "无法识别 arXiv 链接/ID（支持 abs/pdf 链接或裸 ID）")
+
+    ws_dir = get_settings().workspace_dir
+    pdf = await download_arxiv_pdf(arxiv_id, ws_dir / "arxiv")
+    user_id = request.headers.get("X-User-Id", "default")
+    session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
+    response = await session.handle_file_upload(pdf)
+
+    return {
+        "session_id": sid,
+        "arxiv_id": arxiv_id,
+        "response": response,
+        "paper_dir": session.state.current_paper,
+    }
 
 
 @app.post("/api/sessions/{sid}/chat")
-async def chat(sid: str, payload: dict):
+async def chat(sid: str, request: Request, payload: dict):
     """向 Agent 发送消息"""
     msg = payload.get("message", "")
     if not msg.strip():
@@ -118,10 +184,31 @@ async def chat(sid: str, payload: dict):
 
     from paperwise.config.settings import get_settings
     ws_dir = get_settings().workspace_dir
-    session = await _ensure_session(sid, ws_dir / f"session_{sid}")
+    user_id = request.headers.get("X-User-Id", "default")
+    session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
 
     response = await session.chat(msg)
     return {"session_id": sid, "response": response}
+
+
+@app.post("/api/sessions/{sid}/timer")
+async def set_session_timer(sid: str, payload: dict):
+    """为会话设置主动定时提醒（到期后注入 Agent 上下文并广播）。"""
+    from paperwise.core.scheduler import Scheduler
+
+    seconds = max(1, int(payload.get("seconds", 60)))
+    message = str(payload.get("message", "定时提醒：请检查你的任务进度"))
+    scheduler = Scheduler.instance()
+    timer_id = scheduler.add_timer(
+        seconds, message, sid,
+        callback=lambda ev: _fire_scheduler_event(sid, ev),
+    )
+    return {
+        "timer_id": timer_id,
+        "seconds": seconds,
+        "message": message,
+        "scheduled_at": datetime.now().strftime("%H:%M:%S"),
+    }
 
 
 @app.get("/api/sessions/{sid}/history")
@@ -170,6 +257,63 @@ async def generate_pptx(paper_dir: str = Query(...)):
             "download_url": f"/api/download?path={out}"}
 
 
+@app.get("/api/paper/sections")
+async def get_sections(paper_dir: str = Query(...)):
+    """获取解析后论文的各报告章节内容（供编辑/预览）。"""
+    pd = Path(paper_dir)
+    if not pd.exists():
+        raise HTTPException(404, "论文目录不存在")
+
+    sections = {}
+    for sec in ["overview", "motivation", "methodology", "experiments",
+                "critical_analysis", "related_work", "conclusion"]:
+        sp = pd / "report" / "sections" / f"{sec}.md"
+        if sp.exists():
+            sections[sec] = sp.read_text(encoding="utf-8")
+    return {"paper_dir": str(pd), "sections": sections}
+
+
+@app.post("/api/paper/sections")
+async def save_section(payload: dict):
+    """保存某个报告章节的编辑内容。"""
+    allowed = {"overview", "motivation", "methodology", "experiments",
+               "critical_analysis", "related_work", "conclusion"}
+    paper_dir = Path(payload.get("paper_dir", ""))
+    section = payload.get("section", "")
+    content = payload.get("content", "")
+    if section not in allowed:
+        raise HTTPException(400, f"非法章节名: {section}")
+    if not paper_dir.exists():
+        raise HTTPException(404, "论文目录不存在")
+
+    sp = paper_dir / "report" / "sections" / f"{section}.md"
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(content, encoding="utf-8")
+    return {"saved": True, "section": section, "path": str(sp)}
+
+
+@app.get("/api/memory")
+async def list_memory(request: Request):
+    """列出用户记忆卡（Advanced JSON Cards）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+    user_id = request.headers.get("X-User-Id", "default")
+    mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
+    cards = mem.query(limit=200)
+    return {"cards": [c.to_dict() for c in cards]}
+
+
+@app.delete("/api/memory/{card_id}")
+async def delete_memory(card_id: str, request: Request):
+    """删除一条记忆卡。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+    user_id = request.headers.get("X-User-Id", "default")
+    mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
+    ok = mem.forget(card_id)
+    return {"deleted": ok, "card_id": card_id}
+
+
 @app.get("/api/download")
 async def download_file(path: str = Query(...)):
     p = Path(path)
@@ -178,9 +322,28 @@ async def download_file(path: str = Query(...)):
     return FileResponse(p, filename=p.name)
 
 
+@app.get("/api/eval/results")
+async def eval_results():
+    """返回 Agent 能力测试的历史结果（Pass@k / Pass^k）。"""
+    from paperwise.config.settings import get_settings
+    ws = get_settings().workspace_dir / "test_runs"
+    items = []
+    if ws.exists():
+        for f in sorted(ws.glob("test_results_*.json"), reverse=True):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                data["file"] = f.name
+                data["timestamp"] = f.stem.replace("test_results_", "")
+                items.append(data)
+            except Exception:
+                continue
+    return {"runs": items}
+
+
 # ═══════════ 获取/创建 Session ═══════════
 
-async def _ensure_session(sid: str, workspace: Path) -> "AgentSession":
+async def _ensure_session(sid: str, workspace: Path,
+                          user_id: str = "default") -> "AgentSession":
     """获取已有 Session 或创建新 Session。"""
     if sid in sessions and sessions[sid] is not None:
         return sessions[sid]
@@ -198,7 +361,8 @@ async def _ensure_session(sid: str, workspace: Path) -> "AgentSession":
     workspace.mkdir(parents=True, exist_ok=True)
 
     # 全局共享记忆和知识库（跨 Session 持久化）
-    global_store = settings.workspace_dir / ".paperwise"
+    # 用户数据隔离：每个 user_id 独立的 memory / kb 目录
+    global_store = settings.workspace_dir / ".paperwise" / user_id
     global_store.mkdir(parents=True, exist_ok=True)
 
     provider = settings.llm_provider
@@ -267,6 +431,15 @@ async def _ensure_session(sid: str, workspace: Path) -> "AgentSession":
             return "\n\n---\n".join(items)
 
     tools.register(KBSearchTool(kb, workspace))
+
+    # 注入系统调度器：set_timer / monitor_shell 到期后主动通知会话
+    from paperwise.core.scheduler import Scheduler
+    scheduler = Scheduler.instance()
+    for tool_name in ("set_timer", "monitor_shell"):
+        tool = tools.get(tool_name)
+        tool._scheduler = scheduler
+        tool._session_id = sid
+        tool._scheduler_callback = lambda ev: _fire_scheduler_event(sid, ev)
 
     # 设置文件访问确认回调（Web 模式：WebSocket + Future）
     async def confirm_file_access(question: str, detail: str) -> bool:
@@ -397,6 +570,15 @@ async def index():
     if ip.exists():
         return HTMLResponse(ip.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>PaperWise</h1>")
+
+
+@app.get("/dashboard")
+async def dashboard():
+    """评估 Dashboard（Pass@k / Pass^k 可视化）。"""
+    dp = WEB_STATIC / "dashboard.html"
+    if dp.exists():
+        return HTMLResponse(dp.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>PaperWise Dashboard</h1>")
 
 if WEB_STATIC.exists():
     app.mount("/static", StaticFiles(directory=str(WEB_STATIC)), name="static")
