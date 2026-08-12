@@ -23,7 +23,7 @@ paperwise generate pptx workspace/{paper}/     # 生成 PPT
 paperwise evaluate report.md workspace/{paper}/ # 评估质量
 
 # 4. 运行测试
-pytest tests/ -v                               # 54 个单元测试
+pytest tests/ -v                               # 60 个单元测试
 python tests/run_agent_tests.py                # Agent 能力测试
 ```
 
@@ -46,6 +46,7 @@ python tests/run_agent_tests.py                # Agent 能力测试
 8. **arXiv 摄入** — `POST /api/sessions/{sid}/arxiv` 粘贴 arXiv 链接即可解析
 9. **主动提醒** — 定时器到期自动注入 Agent 上下文并广播
 10. **评估 Dashboard** — 打开 `http://localhost:8000/dashboard` 查看 Pass@k 趋势
+11. **主动论文推荐** — 按研究方向自动检索 arXiv 新论文，横幅一键"解读这篇"；每日定时推送
 
 ## CLI 命令
 
@@ -72,7 +73,7 @@ paperwise pipeline paper.pdf                      # 端到端流水线（含对�
 
 ```
 PaperWise/
-├── src/paperwise/              ← 55 个 Python 文件 (~8600 行)
+├── src/paperwise/              ← 56 个 Python 文件 (~9000 行)
 │   ├── core/                   # Agent 核心 (ReAct, LLM客户端, Session)
 │   ├── harness/                # Harness 工程 (5层压缩, 3层护栏, 状态栏)
 │   ├── tools/                  # 17 工具五类 (感知/执行/协作/事件/沟通)

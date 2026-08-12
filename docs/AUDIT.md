@@ -183,6 +183,11 @@
 - ✅ 用户数据隔离：`X-User-Id` 头 → memory/kb 独立命名空间
 - ✅ 评估 Dashboard：`/dashboard`（Pass@k / Pass^k / 成功率可视化）
 - ✅ 主动定时提醒：`POST /api/sessions/{sid}/timer`（到期注入会话 + 广播）
+- ✅ 主动论文推荐：`recommender.py` 按研究方向检索 arXiv（API → 列表页 →
+  Semantic Scholar 三级回退），相关性评分 + 6h 缓存；页面横幅一键解读 +
+  每日定时推送到活跃会话
+- ✅ 前端视觉升级：样式/脚本拆分（style.css + app.js）、头像/Logo 素材、
+  推荐横幅、面板化交互
 
 ---
 

@@ -25,10 +25,12 @@ async def lifespan(_: FastAPI):
     from paperwise.core.scheduler import Scheduler
     Scheduler.instance().start()
     task = asyncio.create_task(_periodic_flush())
+    recommend_task = asyncio.create_task(_recommend_loop(first_delay=3600))
     try:
         yield
     finally:
         task.cancel()
+        recommend_task.cancel()
         await Scheduler.instance().stop()
 
 
@@ -37,6 +39,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # 全局 Session 管理
 sessions: dict[str, "AgentSession"] = {}
+session_user: dict[str, str] = {}  # sid → user_id（用户数据隔离 + 推荐推送）
 ws_clients: dict[str, list[WebSocket]] = {}
 ws_buffer: dict[str, list[str]] = {}
 pending_access: dict[str, asyncio.Future] = {}  # request_id → Future[bool]
@@ -86,6 +89,7 @@ async def create_session(request: Request):
     tid = uuid.uuid4().hex[:8]
     user_id = request.headers.get("X-User-Id", "default")
     sessions[tid] = None  # 延迟初始化（等第一个消息或文件上传）
+    session_user[tid] = user_id
     return {"session_id": tid, "user_id": user_id, "status": "created"}
 
 
@@ -255,6 +259,42 @@ async def generate_pptx(paper_dir: str = Query(...)):
 
     return {"path": out, "slides": len(gen.prs.slides),
             "download_url": f"/api/download?path={out}"}
+
+
+@app.post("/api/profile/research")
+async def set_research_topics(request: Request, payload: dict):
+    """设置用户研究方向（供主动论文推荐使用）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+
+    topics = [str(t).strip() for t in payload.get("topics", []) if str(t).strip()]
+    if not topics:
+        raise HTTPException(400, "topics 不能为空")
+    user_id = request.headers.get("X-User-Id", "default")
+    mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
+    mem.remember(
+        category="preference",
+        data={"research_fields": json.dumps(topics, ensure_ascii=False)},
+        backstory="用户手动设置的研究方向（主动论文推荐依据）",
+        confidence=0.95,
+        tags=["research"],
+    )
+    return {"saved": True, "topics": topics}
+
+
+@app.get("/api/recommend")
+async def recommend_papers(request: Request, limit: int = 5):
+    """获取与用户研究方向相关的近期论文（arXiv）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+    from paperwise.recommender import PaperRecommender
+
+    user_id = request.headers.get("X-User-Id", "default")
+    ws_dir = get_settings().workspace_dir
+    mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
+    recommender = PaperRecommender(ws_dir, memory=mem)
+    result = await recommender.recommend(user_id=user_id, limit=min(limit, 10))
+    return result
 
 
 @app.get("/api/paper/sections")
@@ -475,6 +515,7 @@ async def _ensure_session(sid: str, workspace: Path,
 
     if restored is not None:
         session = restored
+        session_user[sid] = user_id
         print(f"[Session] Restored session {sid} from disk")
     else:
         session = AgentSession(
@@ -487,6 +528,7 @@ async def _ensure_session(sid: str, workspace: Path,
             skills=skills,
             session_id=sid,
         )
+        session_user[sid] = user_id
 
     # 注册事件 → WebSocket 广播
     def on_event(etype, detail):
@@ -560,6 +602,67 @@ async def _periodic_flush():
                 combined = "\n".join(ws_buffer[sid])
                 ws_buffer[sid] = []
                 await _send_ws(sid, combined)
+
+
+async def _run_daily_recommendations() -> None:
+    """为活跃会话生成并推送论文推荐（主动服务，spec S6.4）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+    from paperwise.recommender import PaperRecommender
+
+    ws_dir = get_settings().workspace_dir
+    for sid in list(sessions.keys()):
+        session = sessions.get(sid)
+        if session is None:
+            continue
+        user_id = session_user.get(sid, "default")
+        try:
+            mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
+            recommender = PaperRecommender(ws_dir, memory=mem)
+            result = await recommender.recommend(user_id=user_id, limit=3)
+        except Exception:
+            continue
+        if not result.get("papers"):
+            continue
+
+        # 1. 注入会话上下文：Agent 下一轮对话即可主动提及
+        try:
+            from paperwise.core.types import Message, Role
+            lines = [
+                f"- [{p['title'][:60]}]({p['url']}) "
+                f"[匹配度 {p.get('score', 0):.0%}]"
+                for p in result["papers"]
+            ]
+            session.state.messages.append(Message(
+                role=Role.USER,
+                content=(
+                    "<paper_recommendations>\n"
+                    f"为你找到 {len(result['papers'])} 篇可能与研究方向相关的新论文：\n"
+                    + "\n".join(lines) +
+                    "\n如果用户感兴趣，主动提议解读其中一篇，并给出推荐理由。"
+                    "</paper_recommendations>"
+                ),
+            ))
+        except Exception:
+            pass
+
+        # 2. WebSocket 广播：前端展示推荐横幅
+        await _broadcast(sid, "paper_recommendations", json.dumps({
+            "papers": result["papers"],
+            "topics": result.get("topics", []),
+        }, ensure_ascii=False))
+
+
+async def _recommend_loop(first_delay: int = 3600) -> None:
+    """每日推荐循环：启动 1 小时后首次推送，之后每 24 小时一次。"""
+    await asyncio.sleep(first_delay)
+    while True:
+        try:
+            await _run_daily_recommendations()
+        except Exception:
+            import logging
+            logging.getLogger("paperwise").exception("Daily recommendations failed")
+        await asyncio.sleep(24 * 3600)
 
 
 # ═══════════ 静态文件 ═══════════

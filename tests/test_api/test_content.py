@@ -64,3 +64,26 @@ def test_eval_results_empty(client, tmp_path):
 def test_arxiv_endpoint_rejects_invalid_url(client):
     r = client.post("/api/sessions/any/arxiv", json={"url": "https://github.com/foo/bar"})
     assert r.status_code == 400
+
+
+def test_research_topics_and_recommend(client, tmp_path, monkeypatch):
+    from paperwise.recommender import PaperRecommender
+
+    async def fake_fetch(self, topics, max_results=30, days=7):
+        return [{
+            "arxiv_id": "2401.00001",
+            "title": "3D Gaussian Splatting in Real Time",
+            "summary": "3D Gaussian Splatting rendering",
+            "url": "https://arxiv.org/abs/2401.00001",
+            "authors": ["A"], "published": "2026-08-01",
+        }]
+
+    monkeypatch.setattr(PaperRecommender, "fetch_recent_papers", fake_fetch)
+
+    r = client.post("/api/profile/research", json={"topics": ["3D Gaussian Splatting"]})
+    assert r.json()["saved"] is True
+
+    r = client.get("/api/recommend?limit=5")
+    d = r.json()
+    assert d["topics"] == ["3D Gaussian Splatting"]
+    assert d["papers"] and d["papers"][0]["arxiv_id"] == "2401.00001"

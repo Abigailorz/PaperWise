@@ -3,498 +3,120 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PaperWise — AI 研究助手</title>
-<style>
-:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--dim:#8b949e;--blue:#58a6ff;--green:#3fb950;--orange:#d2991d;--red:#f85149;--purple:#bc8cff}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex}
-/* Sidebar */
-.sidebar{width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.sidebar-header{padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
-.sidebar-header h2{font-size:16px;color:var(--blue)}
-.sidebar-body{flex:1;overflow-y:auto;padding:8px}
-.sidebar-footer{padding:12px;border-top:1px solid var(--border)}
-.sess-item{padding:10px 12px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:4px;transition:.15s;color:var(--dim)}
-.sess-item:hover{background:#1c2333;color:var(--text)}
-.sess-item.active{background:#1c2a3a;color:var(--blue);border:1px solid rgba(88,166,255,.2)}
-.sess-item .title{font-weight:500;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess-item .meta{font-size:11px;color:var(--dim)}
-/* Main chat area */
-.main{flex:1;display:flex;flex-direction:column;min-width:0}
-.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
-.chat-header .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.chat-messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
-/* Message bubbles */
-.msg{display:flex;gap:12px;max-width:85%;animation:fadeIn .3s}
-.msg.user{align-self:flex-end;flex-direction:row-reverse}
-.msg.assistant{align-self:flex-start}
-.msg .avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
-.msg.user .avatar{background:#1c3a5c}.msg.assistant .avatar{background:#1c2a1c}
-.msg .bubble{padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.7;overflow-wrap:break-word}
-.msg.user .bubble{background:var(--blue);color:#fff;border-bottom-right-radius:4px}
-.msg.assistant .bubble{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:4px}
-.msg .bubble p{margin:6px 0}.msg .bubble p:first-child{margin-top:0}
-.msg .bubble ul,.msg .bubble ol{padding-left:20px;margin:6px 0}
-.msg .bubble code{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;font-size:13px}
-.msg .bubble strong{font-weight:600}
-.msg .bubble h1,.bubble h2,.bubble h3{font-size:15px;margin:8px 0 4px}
-.msg .time{font-size:11px;color:var(--dim);margin-top:4px}
-/* Typing indicator */
-.typing .bubble{display:flex;gap:4px;padding:16px}
-.typing .bubble span{width:8px;height:8px;border-radius:50%;background:var(--dim);animation:bounce 1.4s infinite ease-in-out}
-.typing .bubble span:nth-child(1){animation-delay:0s}
-.typing .bubble span:nth-child(2){animation-delay:.2s}
-.typing .bubble span:nth-child(3){animation-delay:.4s}
-@keyframes bounce{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
-/* Welcome */
-.welcome{text-align:center;padding:40px 20px}
-.welcome .icon{font-size:64px;margin-bottom:16px}
-.welcome h2{font-size:20px;color:var(--blue);margin-bottom:8px}
-.welcome .hints{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:20px}
-.welcome .hint{padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:20px;font-size:13px;cursor:pointer;transition:.15s;color:var(--dim)}
-.welcome .hint:hover{border-color:var(--blue);color:var(--text)}
-/* Input area */
-.chat-input{padding:16px 20px;border-top:1px solid var(--border);flex-shrink:0}
-.input-row{display:flex;gap:10px;align-items:flex-end}
-.input-row textarea{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:10px;font-size:14px;resize:none;min-height:44px;max-height:150px;font-family:inherit;line-height:1.5}
-.input-row textarea:focus{outline:none;border-color:var(--blue)}
-.btn{padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:.15s;white-space:nowrap}
-.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{opacity:.9}.btn-primary:disabled{opacity:.4}
-.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
-.btn-small{padding:4px 10px;font-size:12px}
-/* Upload overlay */
-.upload-hint{display:flex;gap:6px;align-items:center}
-.upload-hint label{cursor:pointer;padding:8px;border-radius:8px;border:1px solid var(--border);transition:.15s}
-.upload-hint label:hover{border-color:var(--blue);background:#1c2333}
-.upload-hint input{display:none}
-/* Toast */
-.toasts{position:fixed;top:16px;right:16px;z-index:200}
-.toast{padding:10px 16px;border-radius:8px;margin-bottom:8px;font-size:13px;animation:fadeIn .3s;background:var(--surface);border:1px solid var(--border)}
-@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-/* Report panel */
-.report-panel{display:none;background:var(--surface);border-left:1px solid var(--border);width:420px;flex-shrink:0;overflow-y:auto;padding:20px}
-.report-panel.show{display:block}
-.report-panel h3{color:var(--blue);margin-bottom:12px}
-/* Scrollbar */
-::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-@media(max-width:800px){.sidebar{display:none}.msg{max-width:95%}}
-</style>
+<title>PaperWise — AI 学术论文研究助手</title>
+<link rel="icon" href="/static/assets/logo.svg">
+<link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
-<!-- Sidebar -->
-<aside class="sidebar">
-  <div class="sidebar-header"><h2>📄 PaperWise</h2></div>
-  <div class="sidebar-body" id="sessionList">
-    <div class="sess-item active" data-sid="current" onclick="switchSession('current')">
-      <div class="title">当前对话</div>
-      <div class="meta">刚刚</div>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <img class="logo" src="/static/assets/logo.svg" alt="logo">
+      <div class="brand">Paper<span>Wise</span></div>
+      <span class="ver">v0.4.1</span>
     </div>
-  </div>
-  <div class="sidebar-footer">
-    <button class="btn btn-outline" style="width:100%" onclick="newSession()">＋ 新建对话</button>
-  </div>
-</aside>
-
-<!-- Main Chat -->
-<div class="main">
-  <div class="chat-header">
-    <span class="dot" style="background:var(--green)" id="connDot"></span>
-    <span style="font-size:14px;font-weight:500">PaperWise 研究助手</span>
-    <span style="font-size:12px;color:var(--dim)" id="paperLabel"></span>
-    <span style="flex:1"></span>
-    <button class="btn btn-outline btn-small" onclick="toggleReport()">📝 报告面板</button>
-    <button class="btn btn-outline btn-small" onclick="toggleEditor()">✏️ 编辑章节</button>
-    <button class="btn btn-outline btn-small" onclick="toggleMemory()">🧠 记忆</button>
-    <button class="btn btn-outline btn-small" onclick="generatePPTX()">📊 生成 PPT</button>
-  </div>
-
-  <div class="chat-messages" id="chatMessages">
-    <div class="welcome">
-      <div class="icon">📄</div>
-      <h2>你好，我是 PaperWise</h2>
-      <p style="color:var(--dim)">你的 AI 学术论文研究助手</p>
-      <div class="hints">
-        <div class="hint" onclick="sendHint('帮我分析一篇论文')">🔍 分析论文</div>
-        <div class="hint" onclick="sendHint('生成一份完整的解读报告')">📝 生成报告</div>
-        <div class="hint" onclick="sendHint('这篇论文的核心创新是什么？')">💡 提取创新点</div>
-        <div class="hint" onclick="sendHint('实验设计有什么不足？')">🔬 批判性分析</div>
-        <div class="hint" onclick="sendHint('用简单的话解释这篇论文的方法')">📖 通俗解释</div>
-      </div>
-      <div style="margin-top:24px">
-        <label for="fileUpload" class="btn btn-primary" style="cursor:pointer">📤 上传论文 PDF</label>
-        <input type="file" id="fileUpload" accept=".pdf" hidden onchange="handleFile(this)">
+    <div class="sidebar-body" id="sessionList">
+      <div class="session-item active" data-sid="current" onclick="switchSession('current')">
+        <span class="icon">💬</span>
+        <div class="meta"><div class="title">当前对话</div><div class="sub">刚刚</div></div>
       </div>
     </div>
-  </div>
+    <div class="sidebar-footer">
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="newSession()">＋ 新建对话</button>
+    </div>
+  </aside>
 
-  <div class="chat-input">
-    <div class="input-row">
-      <div class="upload-hint">
-        <label for="fileUpload2" title="上传论文">📎</label>
-        <input type="file" id="fileUpload2" accept=".pdf" hidden onchange="handleFile(this)">
+  <!-- 主聊天区 -->
+  <div class="main">
+    <div class="chat-header">
+      <span class="dot off" id="connDot"></span>
+      <span class="app-title">PaperWise 研究助手</span>
+      <span class="paper-label" id="paperLabel"></span>
+      <span class="spacer"></span>
+      <div class="actions">
+        <button class="btn btn-sm" onclick="toggleRecommendPanel()">🔥 推荐</button>
+        <button class="btn btn-sm" onclick="toggleMemory()">🧠 记忆</button>
+        <button class="btn btn-sm" onclick="toggleEditor()">✏️ 编辑</button>
+        <button class="btn btn-sm" onclick="toggleReport()">📝 报告</button>
+        <button class="btn btn-sm btn-primary" onclick="generatePPTX()">📊 生成 PPT</button>
       </div>
-      <textarea id="msgInput" rows="1" placeholder="输入消息，或上传论文 PDF 开始..."
-                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-      <button class="btn btn-primary" onclick="sendMessage()" id="sendBtn">发送</button>
+    </div>
+
+    <div class="chat-messages" id="chatMessages"></div>
+
+    <div class="chat-input">
+      <div class="input-box">
+        <div class="input-tools">
+          <label class="icon-btn" title="上传论文 PDF" for="fileUpload2">📎</label>
+          <input type="file" id="fileUpload2" accept=".pdf" hidden onchange="handleFile(this)">
+        </div>
+        <textarea id="msgInput" rows="1" placeholder="输入消息，或上传论文 PDF 开始..."
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+        <button class="btn btn-primary" onclick="sendMessage()" id="sendBtn">发送</button>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- Report Panel -->
-<div class="report-panel" id="reportPanel">
-  <h3>📝 报告内容</h3>
-  <div id="reportContent" style="font-size:13px;line-height:1.8"></div>
+<!-- 面板遮罩 -->
+<div class="panel-overlay" id="panelOverlay" onclick="closeOtherPanels(null)"></div>
+
+<!-- 推荐面板 -->
+<div class="panel" id="recommendPanel">
+  <div class="panel-head">
+    <h3>🔥 主动论文推荐</h3>
+    <button class="icon-btn" onclick="hideRecommendPanel()">✕</button>
+  </div>
+  <div class="panel-body">
+    <div style="margin-bottom:14px;display:flex;gap:8px">
+      <input id="researchTopics" placeholder="研究方向（逗号分隔），如：3DGS, Agent"
+             style="flex:1;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);outline:none;font-size:12.5px">
+      <button class="btn btn-primary btn-sm" onclick="setResearchTopics()">保存</button>
+    </div>
+    <div id="recommendBody"></div>
+  </div>
 </div>
 
-<!-- Memory Panel -->
-<div class="report-panel" id="memoryPanel">
-  <h3>🧠 用户记忆 <button class="btn btn-small btn-outline" style="float:right" onclick="refreshMemory()">刷新</button></h3>
-  <div id="memoryList" style="font-size:13px"></div>
+<!-- 报告面板 -->
+<div class="panel" id="reportPanel">
+  <div class="panel-head">
+    <h3>📝 报告内容</h3>
+    <button class="icon-btn" onclick="toggleReport()">✕</button>
+  </div>
+  <div class="panel-body" id="reportContent"></div>
 </div>
 
-<!-- Section Editor Panel -->
-<div class="report-panel" id="editorPanel">
-  <h3>✏️ 章节编辑</h3>
-  <select id="sectionSelect" style="width:100%;margin-bottom:8px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px" onchange="selectSection()"></select>
-  <textarea id="sectionText" style="width:100%;height:250px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;font-family:monospace"></textarea>
-  <div style="display:flex;gap:8px;margin-top:8px">
-    <button class="btn btn-small btn-outline" style="flex:1" onclick="saveSection(false)">保存</button>
-    <button class="btn btn-small btn-primary" style="flex:1" onclick="saveSection(true)">保存并生成 PPT</button>
+<!-- 记忆面板 -->
+<div class="panel" id="memoryPanel">
+  <div class="panel-head">
+    <h3>🧠 用户记忆</h3>
+    <button class="btn btn-sm" onclick="refreshMemory()">刷新</button>
+    <button class="icon-btn" onclick="toggleMemory()">✕</button>
+  </div>
+  <div class="panel-body" id="memoryList"></div>
+</div>
+
+<!-- 章节编辑面板 -->
+<div class="panel" id="editorPanel">
+  <div class="panel-head">
+    <h3>✏️ 章节编辑</h3>
+    <button class="icon-btn" onclick="toggleEditor()">✕</button>
+  </div>
+  <div class="panel-body">
+    <select id="sectionSelect" onchange="selectSection()"
+            style="width:100%;margin-bottom:10px;padding:8px;background:var(--bg-soft);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px"></select>
+    <textarea id="sectionText" style="width:100%;height:300px;background:var(--bg-soft);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:Consolas,monospace;outline:none"></textarea>
+    <div class="editor-tools">
+      <button class="btn" style="flex:1" onclick="saveSection(false)">保存</button>
+      <button class="btn btn-primary" style="flex:1" onclick="saveSection(true)">保存并生成 PPT</button>
+    </div>
   </div>
 </div>
 
 <div class="toasts" id="toasts"></div>
 
-<script>
-// ═══════════ 状态 ═══════════
-let sid = null, ws = null, paperDir = null, reportMd = '';
-
-async function init() {
-  const r = await fetch('/api/sessions', {method:'POST'});
-  const d = await r.json();
-  sid = d.session_id;
-  connectWS(sid);
-  loadSessions();
-}
-init();
-
-// ═══════════ WebSocket ═══════════
-function connectWS(tid) {
-  if (ws) try{ws.close()}catch(e){}
-  const proto = location.protocol==='https:'?'wss:':'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws/${tid}`);
-  ws.onopen = () => document.getElementById('connDot').style.background = 'var(--green)';
-  ws.onclose = () => document.getElementById('connDot').style.background = 'var(--red)';
-  ws.onmessage = e => {
-    for (const line of e.data.split('\n')) {
-      try {
-        const d = JSON.parse(line);
-        if (d.type === 'tool_start') showTyping(`🔧 调用工具：${d.detail}`);
-        else if (d.type === 'tool_end') showTyping(`  ✓ ${d.detail}`);
-        else if (d.type === 'paper_loaded') {
-          paperDir = true; // paper is loaded
-          document.getElementById('paperLabel').textContent = `📄 ${d.detail}`;
-        }
-      } catch(_) {}
-    }
-  };
-}
-
-// ═══════════ 消息发送 ═══════════
-async function sendMessage() {
-  const input = document.getElementById('msgInput');
-  const msg = input.value.trim();
-  if (!msg) return;
-  input.value = ''; input.style.height = 'auto';
-
-  // 移除欢迎界面
-  const welcome = document.querySelector('.welcome');
-  if (welcome) welcome.remove();
-
-  addMessage('user', msg);
-  showTyping('思考中...');
-
-  try {
-    const r = await fetch(`/api/sessions/${sid}/chat`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({message: msg})
-    });
-    const d = await r.json();
-    removeTyping();
-    addMessage('assistant', d.response);
-  } catch(e) {
-    removeTyping();
-    addMessage('assistant', `抱歉，遇到了错误：${e.message}`);
-  }
-}
-
-function sendHint(msg) {
-  document.getElementById('msgInput').value = msg;
-  sendMessage();
-}
-
-// ═══════════ 文件上传 ═══════════
-async function handleFile(input) {
-  const file = input.files[0];
-  if (!file?.name.endsWith('.pdf')) return;
-  addMessage('user', `上传了：${file.name}`);
-  showTyping('正在解析论文...');
-
-  const fd = new FormData(); fd.append('file', file);
-  try {
-    const r = await fetch(`/api/sessions/${sid}/upload`, {method:'POST', body:fd});
-    const d = await r.json();
-    removeTyping();
-    paperDir = d.paper_dir || true;
-    document.getElementById('paperLabel').textContent = `📄 ${file.name}`;
-    addMessage('assistant', d.response);
-  } catch(e) {
-    removeTyping();
-    addMessage('assistant', `解析失败：${e.message}`);
-  }
-  input.value = '';
-}
-
-// ═══════════ 消息渲染 ═══════════
-function addMessage(role, text) {
-  const container = document.getElementById('chatMessages');
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-
-  const avatar = role === 'user' ? '👤' : '🤖';
-  const time = new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
-
-  // 简单的 Markdown 渲染
-  let html = text
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-    .replace(/\$\$(.+?)\$\$/g, '<code>$1</code>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/• (.+)/g, '<br>• $1')
-    .replace(/^\- (.+)/gm, '<br>• $1');
-
-  div.innerHTML = `<div class="avatar">${avatar}</div>
-    <div><div class="bubble"><p>${html}</p></div>
-    <div class="time">${time}</div></div>`;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-
-  // 如果是 assistant 消息且包含报告内容，缓存
-  if (role === 'assistant' && (text.includes('## ') || text.includes('### '))) {
-    reportMd = text;
-  }
-}
-
-function showTyping(msg) {
-  removeTyping();
-  const container = document.getElementById('chatMessages');
-  const div = document.createElement('div');
-  div.className = 'msg assistant typing';
-  div.id = 'typingIndicator';
-  div.innerHTML = `<div class="avatar">🤖</div>
-    <div><div class="bubble"><span></span><span></span><span></span></div>
-    <div class="time">${msg}</div></div>`;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-}
-function removeTyping() {
-  const el = document.getElementById('typingIndicator');
-  if (el) el.remove();
-}
-
-// ═══════════ PPT ═══════════
-async function generatePPTX() {
-  if (!paperDir) { toast('请先上传论文'); return; }
-  toast('正在生成 PPT...');
-  try {
-    const r = await fetch(`/api/generate/pptx?paper_dir=${encodeURIComponent(paperDir)}`, {method:'POST'});
-    const d = await r.json();
-    window.open(`/api/download?path=${encodeURIComponent(d.path)}`, '_blank');
-    toast(`PPT 已生成（${d.slides} 页）`);
-  } catch(e) { toast('PPT 生成失败'); }
-}
-
-// ═══════════ 报告面板 ═══════════
-function toggleReport() {
-  const p = document.getElementById('reportPanel');
-  p.classList.toggle('show');
-  if (p.classList.contains('show') && reportMd) {
-    document.getElementById('reportContent').innerHTML = reportMd
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
-  }
-}
-
-// ═══════════ 记忆管理 ═══════════
-function closeOtherPanels(keep) {
-  for (const id of ['reportPanel', 'memoryPanel', 'editorPanel']) {
-    if (id !== keep) document.getElementById(id).classList.remove('show');
-  }
-}
-async function toggleMemory() {
-  const p = document.getElementById('memoryPanel');
-  closeOtherPanels('memoryPanel');
-  p.classList.toggle('show');
-  if (p.classList.contains('show')) await refreshMemory();
-}
-async function refreshMemory() {
-  const list = document.getElementById('memoryList');
-  try {
-    const r = await fetch('/api/memory');
-    const d = await r.json();
-    const cards = d.cards || [];
-    list.innerHTML = cards.length ? '' : '<p style="color:var(--dim)">暂无记忆</p>';
-    for (const c of cards) {
-      const div = document.createElement('div');
-      div.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px';
-      const dataStr = Object.entries(c.data || {}).map(([k, v]) => `${k}: ${v}`).join('; ').slice(0, 140);
-      div.innerHTML = `<div style="color:var(--blue);font-weight:600">${c.category} · ${Math.round((c.confidence || 0) * 100)}%</div>
-        <div style="margin:4px 0">${dataStr}</div>
-        <div style="color:var(--dim)">${c.backstory || ''}</div>
-        <button class="btn btn-small" style="margin-top:6px" onclick="deleteMemoryCard('${c.card_id}')">删除</button>`;
-      list.appendChild(div);
-    }
-  } catch(_) { list.innerHTML = '<p style="color:var(--dim)">加载失败</p>'; }
-}
-async function deleteMemoryCard(id) {
-  await fetch(`/api/memory/${id}`, {method:'DELETE'});
-  refreshMemory();
-}
-
-// ═══════════ 章节编辑 ═══════════
-async function toggleEditor() {
-  if (!paperDir || paperDir === true) { toast('请先上传并解析论文'); return; }
-  const p = document.getElementById('editorPanel');
-  closeOtherPanels('editorPanel');
-  p.classList.toggle('show');
-  if (p.classList.contains('show')) await loadSections();
-}
-async function loadSections() {
-  try {
-    const r = await fetch(`/api/paper/sections?paper_dir=${encodeURIComponent(paperDir)}`);
-    const d = await r.json();
-    window.__sections = d.sections || {};
-    const sel = document.getElementById('sectionSelect');
-    sel.innerHTML = '';
-    const names = {overview:'概览', motivation:'动机', methodology:'方法', experiments:'实验',
-                   critical_analysis:'批判分析', related_work:'相关工作', conclusion:'结论'};
-    for (const sec of Object.keys(window.__sections)) {
-      const opt = document.createElement('option');
-      opt.value = sec; opt.textContent = names[sec] || sec;
-      sel.appendChild(opt);
-    }
-    if (sel.options.length) selectSection();
-    else document.getElementById('sectionText').value = '（暂无章节内容，请先生成报告）';
-  } catch(_) { toast('加载章节失败'); }
-}
-function selectSection() {
-  const sec = document.getElementById('sectionSelect').value;
-  document.getElementById('sectionText').value =
-    (window.__sections && window.__sections[sec]) || '';
-}
-async function saveSection(regenerate) {
-  const sec = document.getElementById('sectionSelect').value;
-  const content = document.getElementById('sectionText').value;
-  if (!sec) { toast('请先选择章节'); return; }
-  try {
-    const r = await fetch('/api/paper/sections', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({paper_dir: paperDir, section: sec, content})});
-    if (!r.ok) { toast('保存失败'); return; }
-    toast('章节已保存');
-    if (regenerate) generatePPTX();
-  } catch(_) { toast('保存失败'); }
-}
-
-// ═══════════ Session 管理 ═══════════
-async function newSession() {
-  const r = await fetch('/api/sessions', {method:'POST'});
-  const d = await r.json();
-  sid = d.session_id; paperDir = null; reportMd = '';
-  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
-  const cur = document.querySelector('.sess-item[data-sid="current"]');
-  if (cur) cur.classList.add('active');
-  document.getElementById('chatMessages').innerHTML = `
-    <div class="welcome">
-      <div class="icon">📄</div><h2>新对话已开始</h2>
-      <p style="color:var(--dim)">上传论文或直接提问</p>
-    </div>`;
-  document.getElementById('paperLabel').textContent = '';
-  document.getElementById('reportPanel').classList.remove('show');
-  connectWS(sid);
-}
-function switchSession(s) {
-  if (s === 'current') {
-    document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
-    const cur = document.querySelector('.sess-item[data-sid="current"]');
-    if (cur) cur.classList.add('active');
-  }
-}
-
-// ═══════════ 历史会话恢复 ═══════════
-async function loadSessions() {
-  try {
-    const r = await fetch('/api/sessions');
-    const d = await r.json();
-    const list = document.getElementById('sessionList');
-    for (const s of (d.sessions || [])) {
-      if (s.session_id === sid) continue;
-      const div = document.createElement('div');
-      div.className = 'sess-item';
-      div.dataset.sid = s.session_id;
-      const title = (s.current_paper || s.topic || s.session_id).slice(0, 18);
-      const meta = (s.last_active || '').slice(0, 16);
-      div.innerHTML = `<div class="title">${title}</div><div class="meta">${meta}</div>`;
-      div.onclick = () => resumeSession(s.session_id, title, s.current_paper);
-      list.insertBefore(div, list.lastElementChild);
-    }
-  } catch(_) {}
-}
-
-async function resumeSession(newSid, title, currentPaper) {
-  sid = newSid; reportMd = '';
-  paperDir = currentPaper || null;
-  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
-  const target = document.querySelector(`.sess-item[data-sid="${newSid}"]`);
-  if (target) target.classList.add('active');
-  document.getElementById('chatMessages').innerHTML = '';
-  document.getElementById('reportPanel').classList.remove('show');
-  document.getElementById('paperLabel').textContent = paperDir ? `📄 ${title}` : '';
-  connectWS(sid);
-  showTyping('恢复会话...');
-  try {
-    const r = await fetch(`/api/sessions/${sid}/history`);
-    const d = await r.json();
-    removeTyping();
-    const msgs = d.messages || [];
-    for (const m of msgs) addMessage(m.role, m.content);
-    if (!msgs.length) {
-      document.getElementById('chatMessages').innerHTML =
-        `<div class="welcome"><div class="icon">📄</div><h2>会话已恢复</h2><p style="color:var(--dim)">${title}</p></div>`;
-    }
-  } catch(e) {
-    removeTyping();
-  }
-}
-
-// ═══════════ 辅助 ═══════════
-function toast(msg) {
-  const el = document.createElement('div');
-  el.className='toast'; el.textContent=msg;
-  document.getElementById('toasts').appendChild(el);
-  setTimeout(()=>el.remove(), 3000);
-}
-
-// 自适应 textarea 高度
-document.getElementById('msgInput').addEventListener('input', function(){
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 150) + 'px';
-});
-</script>
+<script src="/static/js/app.js"></script>
 </body>
 </html>

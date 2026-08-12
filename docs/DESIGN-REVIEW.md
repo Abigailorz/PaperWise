@@ -148,7 +148,9 @@ LLM 调用成本高，且只覆盖前 10 篇文档的前 2000 字符。
 
 1. **Web UI 增强** — ✅ 历史会话恢复、记忆管理面板、章节编辑（保存后重新生成 PPT）已实现；PPT 逐页可视化预览待做
 2. **arXiv 摄入** — ✅ `POST /api/sessions/{sid}/arxiv` + `paperwise fetch-arxiv` 已实现；上传页 UI 入口待做
-3. **主动论文推荐** — ⏳ 落地 spec 中的 `daily_arxiv_check`，按用户研究方向推送论文
+3. **主动论文推荐** — ✅ `recommender.py`（arXiv API → 列表页 → Semantic Scholar
+   三级回退 + 相关性评分 + 缓存）、`GET /api/recommend`、`POST /api/profile/research`、
+   每日定时推送到活跃会话 + 前端横幅一键"解读这篇"
 4. **用户系统/多租户** — ✅ 用户数据隔离（X-User-Id → memory/kb 命名空间）已实现；完整认证/登录待做
 5. **多模态深度** — ⏳ 图表用视觉模型（如 Qwen-VL/CLIP）生成真正语义化描述并嵌入
 6. **评估 Dashboard** — ✅ `/dashboard` 页面（Pass@k / Pass^k / 成功率可视化）已实现
@@ -194,7 +196,7 @@ EvolutionEngine 能"改自己"，但没有回归测试和回滚——这在生�
 | B（能力） | 消息总线、工具自发现、索引持久化、Windows 适配、文件锁 | ✅ 已完成 |
 | B+（能力） | 主动调度器、LLM Sidecar 审查 | ✅ 已完成 |
 | C（产品） | UI 增强、arXiv、用户隔离、评估 Dashboard | ✅ 基础版完成 |
-| D（深化） | 主动论文推荐、PPT 可视化预览、完整认证、多模态深度 | ⏳ 后续 |
+| D（深化） | PPT 可视化预览、完整认证、多模态深度 | ⏳ 后续 |
 
 > 与 `docs/AUDIT.md` 的遗留项一一对应：P0 覆盖 HIGH-1/2/8/14，
 > P1 覆盖 HIGH-3/4/5/6/7/10/12/13，P2 覆盖 MEDIUM/LOW 多数条目。

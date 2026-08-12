@@ -309,6 +309,64 @@ def fetch_arxiv(
 
 
 @app.command()
+def recommend(
+    limit: int = typer.Option(5, "--limit", "-n", help="推荐数量"),
+    days: int = typer.Option(7, "--days", "-d", help="只看最近 N 天"),
+    topics: Optional[str] = typer.Option(
+        None, "--topics", "-t",
+        help="逗号分隔的研究方向（默认从用户记忆读取）",
+    ),
+):
+    """主动论文推荐 — 按研究方向从 arXiv 检索近期论文并评分"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+    from paperwise.recommender import PaperRecommender
+
+    console.print(Panel("arXiv Paper Recommender", title="PaperWise Recommend"))
+
+    async def run_recommend():
+        settings = get_settings()
+        mem = UserMemory(settings.workspace_dir / ".paperwise" / "default" / "memory")
+        recommender = PaperRecommender(settings.workspace_dir, memory=mem)
+        extra = [t.strip() for t in topics.split(",")] if topics else None
+        result = await recommender.recommend(
+            user_id="default", topics=extra, limit=limit, days=days,
+        )
+
+        console.print(f"研究方向: {('、'.join(result.get('topics', [])) or '（未设置）')}")
+        papers = result.get("papers", [])
+        if not papers:
+            console.print(
+                f"[yellow]未找到推荐论文[/yellow]"
+                f"{'（先设置研究方向：--topics "3DGS,Agent" 或调用 POST /api/profile/research）' if not result.get('topics') else ''}"
+            )
+            return
+
+        table = Table(title=f"推荐论文（{len(papers)} 篇）")
+        table.add_column("#", style="dim")
+        table.add_column("标题", style="cyan")
+        table.add_column("匹配度", style="green")
+        table.add_column("方向", style="magenta")
+        table.add_column("日期")
+        for i, p in enumerate(papers, 1):
+            table.add_row(
+                str(i),
+                p.get("title", "")[:60],
+                f"{p.get('score', 0):.0%}",
+                "、".join(p.get("matched", [])[:2]),
+                p.get("published", ""),
+            )
+        console.print(table)
+        console.print("\n[dim]输入 `paperwise pipeline <pdf>` 可一键解读某篇论文[/dim]")
+
+    try:
+        asyncio.run(run_recommend())
+    except Exception as e:
+        console.print(f"[red]✗ Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def generate(
     target: str = typer.Argument(..., help="生成目标: pptx"),
     paper_dir: Path = typer.Argument(..., help="解析后的论文目录"),

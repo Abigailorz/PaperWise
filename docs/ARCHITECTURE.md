@@ -23,11 +23,11 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 
 | 指标 | 值 |
 |------|-----|
-| Python 文件 | 55 个 |
-| 代码行数 | ~8,600 行 |
+| Python 文件 | 56 个 |
+| 代码行数 | ~9,000 行 |
 | 工具数量 | 17 个（五类全覆盖） |
 | Agent Skills | 3 个（学术阅读/报告生成/验证） |
-| 单元测试 | 54 个 |
+| 单元测试 | 60 个 |
 | 支持 LLM | DeepSeek / Kimi K3 / OpenAI / 任意兼容 API |
 | CRITICAL 降级 | 0（全部修复） |
 
@@ -76,7 +76,8 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 │           ├─ Dense+Sparse+RRF+Rerank+HyDE+RAPTOR+GraphRAG │
 │           ├─ Advanced JSON Cards + LLM提取 + 去重合并    │
 │           ├─ 轨迹→模式→部署闭环                          │
-│           └─ 主动调度器 (定时器/监控事件 → 会话注入)      │
+│           ├─ 主动调度器 (定时器/监控事件 → 会话注入)      │
+│           └─ 论文推荐器 (arXiv API/列表页/语义学者)      │
 └──────────────────────────────────────────────────────┘
 ```
 
