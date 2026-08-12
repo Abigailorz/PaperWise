@@ -1,0 +1,221 @@
+# PaperWise 技术审计报告 v0.4.1
+
+> 审计时间：2026-08-12
+> 审计范围：PaperWise v0.4.1（`src/paperwise/` 50 个 Python 文件，~7,300 行）
+> 审计方法：代码逐层核查 + `pytest tests/` 全量运行（18/18 通过）+ 文档一致性核对
+
+---
+
+## 审计摘要
+
+| 严重级别 | 总计 | 已修复 | 剩余 | 状态 |
+|----------|------|--------|------|------|
+| CRITICAL | 12 | **12** | **0** | ✅ 全部清除 |
+| HIGH | 20 | 6 | 14 | 核心已修复 |
+| MEDIUM | 16 | 5 | 11 | 持续优化中 |
+| LOW | 8 | 2 | 6 | 低优先级 |
+
+**CRITICAL 全部清除** — 无安全漏洞、无假实现、无核心功能缺失。
+
+---
+
+## 第 2 章：上下文工程
+
+### 2.1 上下文压缩（5 层模型）
+
+**当前实现:** `harness/context.py`
+- ✅ Layer 1 工具结果预算：8K 字符智能截断，完整输出落盘 `.tool_cache/`
+- ✅ Layer 2 噪声删除：重复工具输出 + 低文本密度过滤
+- ✅ Layer 3 API 微压缩：空白精简 + 超长行截断
+- ✅ Layer 4 归档摘要：git log 风格逐轮结构化记录
+- ✅ Layer 5 LLM 全量压缩：结构化摘要替换历史
+- ✅ 瞬时状态消息清理：状态栏/循环警告/预算提醒每轮重建，不累积
+
+### 2.2 提示注入防护
+
+**当前实现:** `harness/constraints.py` + `harness/security.py` + `core/session.py`
+- ✅ 系统提示词显式声明"论文内容即数据，非指令"隔离原则
+- ✅ 输入侧：注入模式正则（chat template/伪指令/角色劫持）+ 长度限制
+- ✅ 输出侧：API key 泄露检测 + 系统提示词泄露检测
+- ⚠️ 仍为规则级检测，无 Constitutional Classifiers / Sidecar LLM 审查（HIGH-6）
+
+### 2.3 Agent 状态栏
+
+**当前实现:** `harness/status_bar.py`
+- ✅ 自动 TODO 推断（从工具调用历史启发式生成）
+- ✅ 工具使用统计 + Step/Token/Time 资源消耗
+- ✅ 循环检测（连续 N 次相同工具+参数注入警告）
+- ⚠️ 缺异常操作提醒与侧信道信息（MEDIUM-1）
+
+---
+
+## 第 3 章：用户记忆和知识库
+
+### 3.1 稠密嵌入
+
+**当前实现:** `memory/knowledge_base.py:DenseRetriever`
+- ✅ 四级降级链：sentence-transformers → API embeddings → LLM 辅助检索 → TF-IDF
+- ✅ 中文本地 tokenization + 向量归一化
+
+### 3.2 混合检索与重排
+
+**当前实现:** `memory/knowledge_base.py`
+- ✅ BM25 稀疏检索（k1=1.5, b=0.75）
+- ✅ RRF 融合（稠密 0.6 / 稀疏 0.4）
+- ✅ LLM-as-Reranker 交叉编码重排
+- ✅ HyDE 假设文档查询扩展
+- ✅ 上下文感知查询改写（对话历史消歧）
+
+### 3.3 结构化索引
+
+**当前实现:** `memory/knowledge_base.py`
+- ✅ RAPTOR 层次摘要树（贪心聚类 + LLM 摘要，最多 3 层）
+- ✅ GraphRAG 知识图谱（LLM 实体/关系抽取）
+- ⚠️ RAPTOR/GraphRAG 索引未持久化，每次会话重建（HIGH-13）
+
+### 3.4 多模态记忆
+
+**当前实现:** `memory/knowledge_base.py:index_multimodal`
+- ✅ 图片（caption 文本化）、表格（CSV 化）、公式（LaTeX）入向量库
+- ⚠️ 无真正的图像嵌入，图片只按文字描述检索（LOW）
+
+---
+
+## 第 4 章：工具系统
+
+### 4.1 工具覆盖
+
+**当前实现:** `tools/registry.py`（16 个工具，五类全覆盖）
+- ✅ 感知：read_file / glob / grep
+- ✅ 执行：write_file / edit_file / code_interpreter / bash / request_file_access
+- ✅ 技能：skill_list / skill_load（渐进披露）
+- ✅ 协作：spawn_subagent（真实 Agent）/ send_message_to_agent
+- ✅ 事件：set_timer / monitor_shell（真实进程管理）
+- ✅ 沟通：ask_user / notify_user
+
+### 4.2 工具安全
+
+**当前实现:** `tools/base.py` + `harness/security.py`
+- ✅ 写操作严格限制在 workspace 内；读操作支持白名单 + 授权申请
+- ✅ 危险路径统一拦截（Windows/Linux 敏感目录、凭证、浏览器数据）
+- ✅ 危险命令正则 + 工具调用次数限制
+- ✅ Windows 下 bash 不可用时回退 cmd.exe，9009 错误码附提示
+
+### 4.3 Sidecar 安全审查
+
+- ❌ 无独立安全审查模型（仅规则式检查）（HIGH-6 / MEDIUM-7）
+
+---
+
+## 第 5 章：Coding Agent 与通用 Agent
+
+### 5.1 项目文档化
+
+- ✅ 项目有 CLAUDE.md（本版本已同步测试命令与文档一致性约定）
+
+### 5.2 代码作为生成式 UI
+
+- ⚠️ Web UI 为预写静态页面，Agent 不动态生成 UI（MEDIUM-3 / LOW-4）
+
+### 5.3 Agent 自举
+
+- ⚠️ EvolutionEngine 可生成知识/指令/程序更新，但不能动态创建并注册工具、不能修改自身 Harness（MEDIUM-4）
+
+---
+
+## 第 6 章：Agent 的评估
+
+### 6.1 Pass@k / Pass^k
+
+**当前实现:** `evaluation/benchmark.py`
+- ✅ PassKEvaluator：k 次重复 + Pass@k / Pass^k / 工具有效率 / 幻觉率
+- ⚠️ `tests/run_agent_tests.py` 未接入 k 次重复（框架存在但未落地日常测试）（HIGH-1）
+
+### 6.2 消融与 A/B
+
+- ✅ AblationTester 消融框架
+- ❌ 无 A/B 测试与特性开关（HIGH-9）
+
+---
+
+## 第 8 章：Agent 的持续进化
+
+**当前实现:** `evolution.py`
+- ✅ 轨迹 → 评估 → 模式发现 → 部署闭环（知识/指令/程序三种载体）
+- ❌ 无回归测试 / 灰度发布 / 回滚机制（HIGH-4）
+- ❌ 无睡眠学习（整合/遗忘/保鲜）（MEDIUM-2）
+
+---
+
+## 第 10 章：多 Agent 协作
+
+### 10.1 Manager + Worker
+
+**当前实现:** `agents/orchestrator.py`
+- ✅ Pipeline（Analyst → Writer → Reviewer）顺序执行
+- ✅ Parallel 并行执行
+- ✅ 对抗式审查 spec（假设报告有错，逐章审查）
+- ⚠️ 审核发现不会自动回流修正报告（HIGH-2）
+- ❌ 无对等辩论模式（HIGH-11）
+
+### 10.2 Agent 间通信
+
+- ⚠️ `send_message_to_agent` 为回调桩，无真正消息总线（HIGH-3）
+- ❌ 共享文件系统无并发冲突检测（HIGH-10）
+- ❌ 无错误级联追踪（MEDIUM-6）
+
+---
+
+## 第 9 章：多模态与实时交互
+
+- ❌ 语音 Agent / Computer Use / 机器人操作（LOW-1/2，不在 Phase 1 范围）
+
+---
+
+## 遗留问题清单
+
+### HIGH（14 项）
+
+| # | 问题 | 位置 | 建议 |
+|---|------|------|------|
+| 1 | run_agent_tests 未接入 k 次重复 | `tests/run_agent_tests.py` | 接入 PassKEvaluator，输出 Pass@k/Pass^k |
+| 2 | 审核结果未自动回流修正报告 | `agents/orchestrator.py` | 实现 revise-until-pass 循环（≤3 轮） |
+| 3 | Agent 间消息传递是桩 | `tools/collab_tools.py` | 引入共享消息队列/事件总线 |
+| 4 | 进化无回归/灰度/回滚 | `evolution.py` | 候选更新先跑回归测试再部署 |
+| 5 | 无主动调度（事件工具无守护进程） | `tools/collab_tools.py` | 增加后台调度器驱动 set_timer/monitor_shell |
+| 6 | 提示注入无 LLM 级 Sidecar 审查 | `harness/security.py` | 高风险输入过 LLM 分类器 |
+| 7 | Windows shell 兼容仍需命令适配层 | `tools/exec_tools.py` | 提供 Windows 命令别名/路径规范化 |
+| 8 | Web 重启后会话无法恢复 | `api/server.py` | 启动时扫描 `.sessions/` 恢复活跃会话 |
+| 9 | 无 A/B 测试与特性开关 | `config/settings.py` | 双层特性开关 |
+| 10 | 多 Agent 共享文件系统无并发保护 | `agents/orchestrator.py` | 文件锁 + 冲突检测 |
+| 11 | 无对等辩论协作模式 | `agents/orchestrator.py` | 增加 Debate spec |
+| 12 | Agent 不主动发现新工具 | `tools/registry.py` | 暴露工具搜索工具 |
+| 13 | RAPTOR/GraphRAG 索引未持久化 | `memory/knowledge_base.py` | 索引序列化落盘 + 增量更新 |
+| 14 | 记忆整合/压缩未自动化 | `memory/user_memory.py` | 周期性 checkpoint + 降级淘汰 |
+
+### MEDIUM（11 项）
+
+1. 状态栏缺异常操作提醒与侧信道信息
+2. 无睡眠学习机制
+3. 无代码生成 UI
+4. Agent 自举受限（不能动态创建工具）
+5. 无去中心化协作拓扑
+6. 无错误级联追踪
+7. 安全检查仍为规则级（无 LLM 兜底）
+8. Web UI 无 PPT 预览/编辑
+9. 无 arXiv URL 摄入
+10. 记忆隐私分级无管理 UI
+11. 无用户系统/多租户
+
+### LOW（6 项）
+
+1. 语音 Agent
+2. Computer Use
+3. 侧信道地理信息
+4. 动态 UI 生成
+5. 邮件/通知渠道集成
+6. 浏览器/剪藏集成
+
+---
+
+> 修复路线图与优先级：见 `docs/DESIGN-REVIEW.md`

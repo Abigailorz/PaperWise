@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Workspace (runtime data)
+workspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+htmlcov/
+.coverage
+.pytest_cache/
+
+# PDF samples (large files)
+sample_papers/*.pdf

@@ -1,0 +1,79 @@
+{
+  "paper_id": "test_paper_simple",
+  "title": "EfficientGraph: A Novel Graph Neural Network for Large-Scale Node Classification",
+  "expected_findings": {
+    "main_contribution": "EfficientGraph GNN with hierarchical attention and dynamic pruning",
+    "key_improvement": "47% computational cost reduction, 83.7% average accuracy",
+    "datasets": ["Cora", "CiteSeer", "PubMed", "PPI", "Reddit"],
+    "baselines": ["GraphSAGE", "GAT", "GCNII"],
+    "limitations_count": 4,
+    "reported_accuracy": 83.7,
+    "best_baseline_accuracy": 81.5,
+    "ablation_components": ["hierarchical attention", "dynamic pruning"]
+  },
+  "evaluation_criteria": {
+    "report_sections": [
+      "overview",
+      "motivation",
+      "methodology",
+      "experiments",
+      "critical_analysis",
+      "related_work",
+      "conclusion"
+    ],
+    "required_citations": [
+      "83.7%",
+      "47%",
+      "GraphSAGE",
+      "GAT",
+      "GCNII",
+      "hierarchical attention",
+      "dynamic pruning"
+    ],
+    "must_include_numbers": [83.7, 47, 87.2, 76.8, 82.5],
+    "must_mention_limitations": [
+      "preprocessing overhead",
+      "small graphs",
+      "heterogeneous graphs",
+      "hyperparameter sensitivity"
+    ]
+  },
+  "agent_test_scenarios": [
+    {
+      "name": "basic_info_extraction",
+      "task": "What is the main contribution of this paper?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["EfficientGraph", "hierarchical attention", "dynamic pruning"],
+      "max_steps": 5
+    },
+    {
+      "name": "numerical_fact_verification",
+      "task": "What accuracy does EfficientGraph achieve on Cora and how does it compare to GAT?",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": ["87.2", "83.0", "4.2"],
+      "max_steps": 5
+    },
+    {
+      "name": "code_verification",
+      "task": "Write Python code to verify the average accuracy claim (83.7%) from the results table. Execute it.",
+      "expected_tools": ["code_interpreter"],
+      "expected_code_contains": ["mean", "average", "87.2", "76.8", "82.5"],
+      "max_steps": 8
+    },
+    {
+      "name": "critical_analysis",
+      "task": "What are the limitations of this paper? Are there any unmentioned limitations?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["heterogeneous", "small graphs", "preprocessing"],
+      "max_steps": 8
+    },
+    {
+      "name": "report_generation",
+      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
+      "expected_tools": ["write_file", "read_file", "grep"],
+      "min_output_files": ["report/report.md"],
+      "min_report_chars": 500,
+      "max_steps": 30
+    }
+  ]
+}
