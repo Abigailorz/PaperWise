@@ -59,3 +59,18 @@ def test_session_load_no_duplicate_system_message(tmp_path):
     system_msgs = [m for m in loaded.state.messages if m.role == Role.SYSTEM]
     assert len(system_msgs) == 1
     assert system_msgs[0].content.startswith("<agent_identity>")
+
+
+async def test_session_tracks_token_usage_across_turns(tmp_path):
+    """对话模式应累计 token 消耗，使上下文压缩的触发条件可满足。"""
+    ws = tmp_path / "ws"
+    sess = _make_session(ws)
+
+    await sess.chat("你好")
+    await sess.chat("再详细一点")
+
+    assert sess._tokens_used > 0, "多轮对话后应累计 token 消耗"
+    assert sess._token_limit > 0
+    state = sess._build_agent_state()
+    assert state.tokens_used == sess._tokens_used
+    assert state.token_limit == sess._token_limit

@@ -151,6 +151,11 @@ class AgentSession:
         self._session_dir = workspace / ".sessions" / self.session_id
         self._session_dir.mkdir(parents=True, exist_ok=True)
 
+        # Token 预算跟踪（对话场景上下文压缩的触发依据）
+        from paperwise.config.settings import get_settings
+        self._tokens_used = 0
+        self._token_limit = get_settings().token_budget
+
     def on_event(self, cb: Callable):
         self.callbacks.append(cb)
 
@@ -382,6 +387,8 @@ class AgentSession:
             messages=self.state.messages,
             current_step=self._step_count,
             max_steps=self._max_steps_per_turn,
+            tokens_used=self._tokens_used,
+            token_limit=self._token_limit,
         )
 
     async def _call_llm(self):
@@ -457,6 +464,11 @@ class AgentSession:
                 args = {}
             tool_calls.append(ToolCall(id=tid, name=td["name"], arguments=args))
 
+        # 估算本次请求的 token 消耗（流式响应无精确 usage 时使用）
+        self._tokens_used += (
+            sum(len(json.dumps(m, ensure_ascii=False)) for m in api_msgs) // 3
+        )
+
         return LLMResponse(content=full_content, tool_calls=tool_calls,
                            stop_reason="tool_calls" if tool_calls else "stop")
 
@@ -518,6 +530,9 @@ class AgentSession:
                 last_active=data.get("last_active",""), current_paper=data.get("current_paper"),
                 topic=data.get("topic",""),
             )
+            from paperwise.config.settings import get_settings
+            session._tokens_used = 0
+            session._token_limit = get_settings().token_budget
             for m in data.get("messages", []):
                 session.state.messages.append(Message(role=Role(m["role"]), content=m.get("content","")))
 
@@ -528,6 +543,10 @@ class AgentSession:
             session.state.messages.insert(0, Message(
                 role=Role.SYSTEM, content=session._build_system_prompt(),
             ))
+            # 估算历史上下文的 token 占用，恢复压缩触发基线
+            session._tokens_used = sum(
+                len(m.content or "") for m in session.state.messages
+            ) // 3
 
             if session.state.current_paper:
                 paper_dir = Path(session.state.current_paper)
