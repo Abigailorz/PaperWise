@@ -10,6 +10,11 @@ async function init() {
     const d = await r.json();
     sid = d.session_id;
   } catch(e) { toast('服务连接失败：' + e.message, 'err'); }
+  // 首次加载渲染欢迎页
+  const container = document.getElementById('chatMessages');
+  if (!container.querySelector('.welcome') && !container.children.length) {
+    container.innerHTML = welcomeHtml();
+  }
   connectWS(sid);
   loadSessions();
   refreshRecommendations();

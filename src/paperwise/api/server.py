@@ -131,7 +131,7 @@ async def upload_paper(sid: str, request: Request, file: UploadFile = File(...))
         raise HTTPException(400, "仅支持 PDF 文件")
 
     from paperwise.config.settings import get_settings
-    ws_dir = get_settings().workspace_dir
+    ws_dir = Path(get_settings().workspace_dir).resolve()
     ws_dir.mkdir(parents=True, exist_ok=True)
 
     up_dir = ws_dir / f"upload_{sid}"
@@ -165,8 +165,17 @@ async def ingest_arxiv(sid: str, request: Request, payload: dict):
     if not arxiv_id:
         raise HTTPException(400, "无法识别 arXiv 链接/ID（支持 abs/pdf 链接或裸 ID）")
 
-    ws_dir = get_settings().workspace_dir
-    pdf = await download_arxiv_pdf(arxiv_id, ws_dir / "arxiv")
+    ws_dir = Path(get_settings().workspace_dir).resolve()
+    try:
+        pdf = await asyncio.wait_for(
+            download_arxiv_pdf(arxiv_id, ws_dir / "arxiv"),
+            timeout=150,
+        )
+    except (asyncio.TimeoutError, Exception) as e:
+        if isinstance(e, asyncio.TimeoutError):
+            raise HTTPException(504, "arXiv 下载超时，请稍后重试")
+        raise HTTPException(502, f"arXiv 下载失败：{type(e).__name__}")
+    pdf = Path(pdf).resolve()
     user_id = request.headers.get("X-User-Id", "default")
     session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
     response = await session.handle_file_upload(pdf)
@@ -187,7 +196,7 @@ async def chat(sid: str, request: Request, payload: dict):
         raise HTTPException(400, "消息不能为空")
 
     from paperwise.config.settings import get_settings
-    ws_dir = get_settings().workspace_dir
+    ws_dir = Path(get_settings().workspace_dir).resolve()
     user_id = request.headers.get("X-User-Id", "default")
     session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
 
@@ -586,12 +595,22 @@ async def _broadcast(sid: str, etype: str, detail: str):
 
 
 async def _send_ws(sid: str, msg: str):
+    """向会话的所有 WS 客户端发送消息。
+
+    带超时保护：失效/僵死的连接会在超时后被剔除，
+    避免 send_text 永久阻塞事件循环（生产事故防护）。
+    """
     dead = []
     for ws in ws_clients.get(sid, []):
-        try: await ws.send_text(msg)
-        except: dead.append(ws)
+        try:
+            await asyncio.wait_for(ws.send_text(msg), timeout=5)
+        except Exception:
+            dead.append(ws)
     for ws in dead:
-        ws_clients[sid].remove(ws)
+        try:
+            ws_clients[sid].remove(ws)
+        except ValueError:
+            pass
 
 
 async def _periodic_flush():

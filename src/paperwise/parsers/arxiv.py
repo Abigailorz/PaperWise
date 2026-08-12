@@ -7,6 +7,7 @@
 """
 
 import re
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -38,7 +39,7 @@ def is_arxiv_id(text: str) -> bool:
 
 
 async def download_arxiv_pdf(arxiv_id: str, dest_dir: Path,
-                             timeout: float = 60.0) -> Path:
+                             timeout: float = 40.0) -> Path:
     """从 arxiv.org 下载论文 PDF。
 
     Args:
@@ -47,16 +48,42 @@ async def download_arxiv_pdf(arxiv_id: str, dest_dir: Path,
 
     Returns:
         下载后的 PDF 路径
+
+    可靠性策略：依次尝试多个来源（代理 → 镜像 → 直连），
+    任一成功即返回，全部失败抛最后一个异常。
     """
     import httpx
 
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"arxiv_{arxiv_id}.pdf"
-    url = f"https://arxiv.org/pdf/{arxiv_id}"
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
-    return dest
+    attempts = [
+        {"label": "arxiv.org", "url": f"https://arxiv.org/pdf/{arxiv_id}",
+         "trust_env": True},
+        {"label": "export.arxiv.org", "url": f"https://export.arxiv.org/pdf/{arxiv_id}",
+         "trust_env": True},
+        {"label": "arxiv.org direct", "url": f"https://arxiv.org/pdf/{arxiv_id}",
+         "trust_env": False},
+    ]
+
+    last_error: Optional[Exception] = None
+    for attempt in attempts:
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=True,
+                trust_env=attempt["trust_env"],
+            ) as client:
+                resp = await client.get(attempt["url"])
+                resp.raise_for_status()
+                dest.write_bytes(resp.content)
+            return dest
+        except Exception as e:
+            last_error = e
+            logging.getLogger("paperwise").warning(
+                f"arXiv download via {attempt['label']} failed: "
+                f"{type(e).__name__}: {str(e)[:120]}")
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("arXiv download failed")

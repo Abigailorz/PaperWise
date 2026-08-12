@@ -5,6 +5,7 @@
 
 import json
 import asyncio
+import httpx
 from typing import Optional, AsyncIterator
 from dataclasses import dataclass
 
@@ -54,6 +55,17 @@ class LLMClient:
         self.client = AsyncOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
+            # 直连 + 显式超时：绕开 Windows 系统代理（Clash）的间歇性抽风，
+            # 避免上游 API 挂起时无限阻塞（SDK 默认 600s 过长）
+            http_client=httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=30.0,
+                    read=180.0,
+                    write=180.0,
+                    pool=30.0,
+                ),
+                trust_env=False,
+            ),
         )
 
     async def chat(
