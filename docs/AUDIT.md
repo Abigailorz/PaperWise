@@ -11,7 +11,7 @@
 | 严重级别 | 总计 | 已修复 | 剩余 | 状态 |
 |----------|------|--------|------|------|
 | CRITICAL | 12 | **12** | **0** | ✅ 全部清除 |
-| HIGH | 20 | 6 | 14 | 核心已修复 |
+| HIGH | 20 | 15 | 5 | 核心已修复 |
 | MEDIUM | 16 | 5 | 11 | 持续优化中 |
 | LOW | 8 | 2 | 6 | 低优先级 |
 
@@ -87,11 +87,11 @@
 
 ### 4.1 工具覆盖
 
-**当前实现:** `tools/registry.py`（16 个工具，五类全覆盖）
+**当前实现:** `tools/registry.py`（17 个工具，五类全覆盖）
 - ✅ 感知：read_file / glob / grep
 - ✅ 执行：write_file / edit_file / code_interpreter / bash / request_file_access
-- ✅ 技能：skill_list / skill_load（渐进披露）
-- ✅ 协作：spawn_subagent（真实 Agent）/ send_message_to_agent
+- ✅ 技能：skill_list / skill_load（渐进披露）/ discover_tool（动态工具发现）
+- ✅ 协作：spawn_subagent（真实 Agent）/ send_message_to_agent / receive_message（AgentBus 邮箱）
 - ✅ 事件：set_timer / monitor_shell（真实进程管理）
 - ✅ 沟通：ask_user / notify_user
 
@@ -102,6 +102,8 @@
 - ✅ 危险路径统一拦截（Windows/Linux 敏感目录、凭证、浏览器数据）
 - ✅ 危险命令正则 + 工具调用次数限制
 - ✅ Windows 下 bash 不可用时回退 cmd.exe，9009 错误码附提示
+- ✅ 命令适配层：python3→python 等别名自动替换
+- ✅ 文件锁：多 Agent 写入冲突保护（.locks.json + TTL 抢占）
 
 ### 4.3 Sidecar 安全审查
 
@@ -131,7 +133,8 @@
 
 **当前实现:** `evaluation/benchmark.py`
 - ✅ PassKEvaluator：k 次重复 + Pass@k / Pass^k / 工具有效率 / 幻觉率
-- ⚠️ `tests/run_agent_tests.py` 未接入 k 次重复（框架存在但未落地日常测试）（HIGH-1）
+- ✅ `tests/run_agent_tests.py` 已接入 `--k` 重复 + Pass@k/Pass^k 输出
+- ✅ 测试数据集扩展：GNN + CV 两篇论文 × 5 场景
 
 ### 6.2 消融与 A/B
 
@@ -157,13 +160,14 @@
 - ✅ Pipeline（Analyst → Writer → Reviewer）顺序执行
 - ✅ Parallel 并行执行
 - ✅ 对抗式审查 spec（假设报告有错，逐章审查）
-- ⚠️ 审核发现不会自动回流修正报告（HIGH-2）
+- ✅ **revise-until-pass 闭环**：审核 findings 自动回流修订 Agent，≤3 轮
+- ✅ 审查记录落盘（review/review_record.json）
 - ❌ 无对等辩论模式（HIGH-11）
 
 ### 10.2 Agent 间通信
 
-- ⚠️ `send_message_to_agent` 为回调桩，无真正消息总线（HIGH-3）
-- ❌ 共享文件系统无并发冲突检测（HIGH-10）
+- ✅ AgentBus 进程内消息总线：register/send/receive + receive_message 工具
+- ✅ 文件锁并发冲突检测（write/edit 前置申请，TTL 抢占）
 - ❌ 无错误级联追踪（MEDIUM-6）
 
 ---
@@ -176,24 +180,27 @@
 
 ## 遗留问题清单
 
-### HIGH（14 项）
+### HIGH（5 项剩余）
 
 | # | 问题 | 位置 | 建议 |
 |---|------|------|------|
-| 1 | run_agent_tests 未接入 k 次重复 | `tests/run_agent_tests.py` | 接入 PassKEvaluator，输出 Pass@k/Pass^k |
-| 2 | 审核结果未自动回流修正报告 | `agents/orchestrator.py` | 实现 revise-until-pass 循环（≤3 轮） |
-| 3 | Agent 间消息传递是桩 | `tools/collab_tools.py` | 引入共享消息队列/事件总线 |
-| 4 | 进化无回归/灰度/回滚 | `evolution.py` | 候选更新先跑回归测试再部署 |
-| 5 | 无主动调度（事件工具无守护进程） | `tools/collab_tools.py` | 增加后台调度器驱动 set_timer/monitor_shell |
-| 6 | 提示注入无 LLM 级 Sidecar 审查 | `harness/security.py` | 高风险输入过 LLM 分类器 |
-| 7 | Windows shell 兼容仍需命令适配层 | `tools/exec_tools.py` | 提供 Windows 命令别名/路径规范化 |
-| 8 | Web 重启后会话无法恢复 | `api/server.py` | 启动时扫描 `.sessions/` 恢复活跃会话 |
-| 9 | 无 A/B 测试与特性开关 | `config/settings.py` | 双层特性开关 |
-| 10 | 多 Agent 共享文件系统无并发保护 | `agents/orchestrator.py` | 文件锁 + 冲突检测 |
-| 11 | 无对等辩论协作模式 | `agents/orchestrator.py` | 增加 Debate spec |
-| 12 | Agent 不主动发现新工具 | `tools/registry.py` | 暴露工具搜索工具 |
-| 13 | RAPTOR/GraphRAG 索引未持久化 | `memory/knowledge_base.py` | 索引序列化落盘 + 增量更新 |
-| 14 | 记忆整合/压缩未自动化 | `memory/user_memory.py` | 周期性 checkpoint + 降级淘汰 |
+| 1 | 进化无回归/灰度/回滚 | `evolution.py` | 候选更新先跑回归测试再部署 |
+| 2 | 无主动调度（事件工具无守护进程） | `tools/collab_tools.py` | 增加后台调度器驱动 set_timer/monitor_shell |
+| 3 | 提示注入无 LLM 级 Sidecar 审查 | `harness/security.py` | 高风险输入过 LLM 分类器 |
+| 4 | 无 A/B 测试与特性开关 | `config/settings.py` | 双层特性开关 |
+| 5 | 无对等辩论协作模式 | `agents/orchestrator.py` | 增加 Debate spec |
+
+### 本次已修复的 HIGH（9 项）
+
+1. ✅ `run_agent_tests` 接入 `--k` 重复 + Pass@k / Pass^k 输出 + 双论文数据集
+2. ✅ 审核结果回流修正报告（revise-until-pass，≤3 轮，`review/review_record.json`）
+3. ✅ Agent 间消息总线（AgentBus + send/receive_message 工具，真实投递）
+4. ✅ Windows shell 命令适配（python3→python 别名 + cmd 回退 + 9009 提示）
+5. ✅ Web 会话恢复（`GET /api/sessions` + 磁盘惰性恢复 + 前端侧边栏）
+6. ✅ 多 Agent 文件锁并发保护（`.locks.json` + TTL 抢占）
+7. ✅ 动态工具发现（`discover_tool`）
+8. ✅ RAPTOR / GraphRAG 索引持久化（签名缓存，避免重复 LLM 调用）
+9. ✅ 记忆整合自动化（`consolidate` + 周期触发）
 
 ### MEDIUM（11 项）
 

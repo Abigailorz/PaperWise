@@ -7,12 +7,38 @@
 import sys
 import asyncio
 import tempfile
+import re
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
 from paperwise.tools.base import BaseTool, ToolDefinition
 from paperwise.core.types import ToolRisk
+
+
+# Windows 常见命令别名（Agent 常写出 Unix 风格命令）
+WINDOWS_COMMAND_ALIASES = [
+    (r"\bpython3\.\d+\b", "python"),
+    (r"\bpython3\b", "python"),
+    (r"\bpython2\b", "python"),
+    (r"\bwhich\b", "where"),
+]
+
+
+def adapt_command_for_windows(command: str) -> tuple[str, bool]:
+    """将 Unix 风格命令适配为 Windows 可执行形式。
+
+    Returns:
+        (适配后的命令, 是否发生了替换)
+    """
+    if sys.platform != "win32":
+        return command, False
+    adapted, changed = command, False
+    for pattern, replacement in WINDOWS_COMMAND_ALIASES:
+        new, n = re.subn(pattern, replacement, adapted)
+        if n:
+            adapted, changed = new, True
+    return adapted, changed
 
 
 class CodeInterpreterTool(BaseTool):
@@ -134,10 +160,11 @@ class BashTool(BaseTool):
         if match:
             return f"[Blocked] Dangerous command pattern: {match}"
 
+        adapted, changed = adapt_command_for_windows(command)
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "bash", "-c", command,
+                    "bash", "-c", adapted,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self.workspace),
@@ -147,7 +174,7 @@ class BashTool(BaseTool):
                 if sys.platform != "win32":
                     raise
                 proc = await asyncio.create_subprocess_exec(
-                    "cmd.exe", "/d", "/s", "/c", command,
+                    "cmd.exe", "/d", "/s", "/c", adapted,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self.workspace),
@@ -174,6 +201,8 @@ class BashTool(BaseTool):
                         "（如 'python -c \"...\"' 而非 'python3'）。"
                     )
                 output_parts.append(f"[exit code: {proc.returncode}]{hint}")
+            elif changed and sys.platform == "win32":
+                output_parts.append("[adapted] 命令已做 Windows 兼容替换 (python3→python 等)")
 
             return "\n".join(output_parts) if output_parts else "[Command completed with no output]"
 

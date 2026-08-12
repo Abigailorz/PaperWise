@@ -59,6 +59,12 @@ class SpawnSubAgentTool(BaseTool):
             sub_workspace.mkdir(parents=True, exist_ok=True)
 
             sub_tools = ToolRegistry.create_default(sub_workspace)
+            # 注册消息邮箱 + receive_message 工具
+            from paperwise.core.bus import AgentBus
+            AgentBus.instance().register(name)
+            sub_tools.register(ReceiveMessageTool(sub_workspace, agent_name=name))
+            for tool_name in sub_tools.list_names():
+                sub_tools.get(tool_name)._agent_name = name
             sub_harness = Harness(sub_workspace, max_steps=max_steps)
 
             config = AgentConfig(
@@ -100,7 +106,7 @@ class SpawnSubAgentTool(BaseTool):
 
 
 class SendMessageTool(BaseTool):
-    """向其他 Agent 发送消息 — 通过回调或事件总线。"""
+    """向其他 Agent 发送消息 — 通过 AgentBus 或回调。"""
 
     def __init__(self, workspace, callback=None):
         super().__init__(workspace)
@@ -127,13 +133,81 @@ class SendMessageTool(BaseTool):
         )
 
     async def execute(self, agent_name: str, message: str) -> str:
+        # 真实通信：优先投递到 AgentBus 邮箱
+        from paperwise.core.bus import AgentBus
+        bus = AgentBus.instance()
+        if bus.is_registered(agent_name):
+            sender = getattr(self, "_agent_name", "main")
+            delivered = bus.send(agent_name, {
+                "from": sender,
+                "message": message,
+                "ts": datetime.now().isoformat(),
+            })
+            if delivered:
+                return (
+                    f"[消息已投递到 Agent '{agent_name}' 的邮箱]\n"
+                    f"来自: {sender}\n内容: {message[:300]}"
+                )
+
         # 真实通信：通过回调发送事件
         if self._callback:
             try:
                 self._callback("agent_msg", json.dumps({"to": agent_name, "msg": message[:500]}))
             except Exception:
                 pass
-        return f"[消息已发送给 '{agent_name}']\n内容: {message[:300]}"
+        return (
+            f"[目标 Agent '{agent_name}' 未注册邮箱，消息仅记录]\n"
+            f"内容: {message[:300]}"
+        )
+
+
+class ReceiveMessageTool(BaseTool):
+    """读取发给当前 Agent 的待处理消息（AgentBus 邮箱）。"""
+
+    def __init__(self, workspace, agent_name: str = "main"):
+        super().__init__(workspace)
+        self._agent_name = agent_name
+        from paperwise.core.bus import AgentBus
+        AgentBus.instance().register(agent_name)
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="receive_message",
+            description=(
+                "读取其他 Agent 发送给你的待处理消息。\n"
+                "当你在协作任务中等待 Manager 或其他 Agent 的指令、"
+                "反馈或新任务时使用。\n"
+                "DO NOT use for: 向用户提问（使用 ask_user）、"
+                "向其他 Agent 发送消息（使用 send_message_to_agent）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "timeout": {
+                        "type": "number",
+                        "description": "等待秒数（0 表示立即返回）。默认 0。",
+                        "default": 0,
+                    },
+                },
+                "required": [],
+            },
+            risk=ToolRisk.LOW,
+        )
+
+    async def execute(self, timeout: float = 0.0) -> str:
+        from paperwise.core.bus import AgentBus
+        bus = AgentBus.instance()
+        wait = max(0.0, min(float(timeout or 0), 30.0))
+        msg = await bus.receive(self._agent_name, timeout=wait if wait > 0 else 0.05)
+        if msg is None:
+            return "[无新消息]"
+        return (
+            f"[新消息]\n"
+            f"来自: {msg.get('from', '?')}\n"
+            f"时间: {msg.get('ts', '')}\n"
+            f"内容: {msg.get('message', '')}"
+        )
 
 
 # ══════════ 事件触发工具 ══════════

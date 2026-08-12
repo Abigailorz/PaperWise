@@ -118,7 +118,8 @@ class AgentSession:
 </output_style>"""
 
     def __init__(self, workspace: Path, llm_client, tools, harness,
-                 memory=None, knowledge_base=None, skills=None, backend="sqlite"):
+                 memory=None, knowledge_base=None, skills=None, backend="sqlite",
+                 session_id: Optional[str] = None):
         self.workspace = Path(workspace)
         self.llm = llm_client
         self.tools = tools
@@ -133,8 +134,8 @@ class AgentSession:
         from paperwise.memory.storage import create_storage
         self._session_store = create_storage(backend, workspace / ".sessions")
 
-        # 加载或创建 Session
-        self.session_id = uuid.uuid4().hex[:8]
+        # 加载或创建 Session（外部可指定 ID，保证与 API sid / 磁盘键一致）
+        self.session_id = session_id or uuid.uuid4().hex[:8]
         self.state = SessionState(
             session_id=self.session_id,
             created_at=time.strftime("%Y-%m-%d %H:%M:%S"),

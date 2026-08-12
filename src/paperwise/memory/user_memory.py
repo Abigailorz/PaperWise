@@ -210,6 +210,102 @@ class UserMemory:
         if to_remove:
             self._save()
 
+    @staticmethod
+    def _card_ts(card: "MemoryCard") -> float:
+        """安全解析卡片时间戳。"""
+        try:
+            return datetime.fromisoformat(card.timestamp).timestamp()
+        except (ValueError, TypeError):
+            return 0.0
+
+    def consolidate(self, max_age_days: int = 90, min_confidence: float = 0.3,
+                    max_per_category: int = 30) -> dict:
+        """周期性记忆整合：清理过期 → 合并重复 → 控制类别规模。
+
+        对应书中 3.1.6 节记忆压缩与整理：
+        - 低置信度 / 超期记忆 → 删除
+        - 同类别同 key 的记忆 → 合并（保留置信度最高版本）
+        - 单类别超限 → 降级删除最旧、最低置信度的卡
+
+        Returns:
+            {"removed": int, "merged": int, "demoted": int,
+             "kept": int, "total_before": int}
+        """
+        before = len(self.cards)
+        removed = 0
+        merged = 0
+        demoted = 0
+
+        # 1. 清理低置信度 / 超期记忆
+        cutoff = time.time() - max_age_days * 86400
+        for cid in list(self.cards):
+            card = self.cards[cid]
+            if self._card_ts(card) < cutoff or card.confidence < min_confidence:
+                del self.cards[cid]
+                removed += 1
+
+        # 2. 合并同类别同 key 集合的重复卡片
+        seen: dict[tuple, str] = {}
+        for cid in list(self.cards):
+            card = self.cards[cid]
+            sig = (card.category, tuple(sorted(card.data.keys())))
+            if sig in seen:
+                keep = self.cards[seen[sig]]
+                keep.data.update(card.data)
+                keep.backstory = keep.backstory or card.backstory
+                keep.confidence = max(keep.confidence, card.confidence)
+                keep.tags = list(set((keep.tags or []) + (card.tags or [])))
+                keep.last_verified = card.last_verified or keep.last_verified
+                keep.version += 1
+                del self.cards[cid]
+                merged += 1
+            else:
+                seen[sig] = cid
+
+        # 3. 类别规模控制
+        from collections import Counter
+        cat_counts = Counter(c.category for c in self.cards.values())
+        for cat, count in cat_counts.items():
+            if count <= max_per_category:
+                continue
+            excess = count - max_per_category
+            cards = sorted(
+                (c for c in self.cards.values() if c.category == cat),
+                key=lambda c: (c.confidence, self._card_ts(c)),
+            )
+            for card in cards[:excess]:
+                del self.cards[card.card_id]
+                demoted += 1
+
+        if removed or merged or demoted:
+            self._save()
+        return {
+            "removed": removed, "merged": merged, "demoted": demoted,
+            "kept": len(self.cards), "total_before": before,
+        }
+
+    def maybe_consolidate(self, interval_days: int = 7) -> dict:
+        """按时间间隔触发整合（避免每次会话都全量执行）。"""
+        try:
+            last = self.store.get("consolidation", "last_run")
+        except Exception:
+            last = None
+        if last:
+            try:
+                last_ts = datetime.fromisoformat(last.get("at", "")).timestamp()
+            except (ValueError, TypeError):
+                last_ts = 0
+            if time.time() - last_ts < interval_days * 86400:
+                return {"skipped": True, "reason": "within_interval"}
+        report = self.consolidate()
+        report["skipped"] = False
+        try:
+            self.store.put("consolidation", "last_run",
+                           {"at": datetime.now().isoformat()})
+        except Exception:
+            pass
+        return report
+
     # ══════════ 上下文注入 ══════════
 
     def to_context_string(self, limit: int = 8) -> str:

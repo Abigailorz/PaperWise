@@ -130,7 +130,7 @@ class ToolRegistry:
         from paperwise.tools.search_tools import GlobTool, GrepTool
         from paperwise.tools.exec_tools import CodeInterpreterTool, BashTool
         from paperwise.tools.access_tool import RequestFileAccessTool
-        from paperwise.tools.skill_tools import SkillListTool, SkillLoadTool
+        from paperwise.tools.skill_tools import SkillListTool, SkillLoadTool, DiscoverTool
         from paperwise.tools.collab_tools import (
             SpawnSubAgentTool, SendMessageTool, SetTimerTool,
             MonitorShellTool, AskUserTool, NotifyUserTool,
@@ -151,6 +151,8 @@ class ToolRegistry:
         registry.register_all([
             SkillListTool(workspace), SkillLoadTool(workspace),
         ])
+        # 动态工具发现（需要 registry 引用以枚举全部工具）
+        registry.register(DiscoverTool(workspace, tool_registry=registry))
         # 文件访问申请工具（需要 ToolRegistry 引用以广播白名单）
         registry.register(RequestFileAccessTool(workspace, tool_registry=registry))
         # 协作工具

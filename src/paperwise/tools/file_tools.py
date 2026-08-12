@@ -137,10 +137,25 @@ class WriteFileTool(BaseTool):
             return _format_access_denied(path, "write")
         except ValueError as e:
             return f"[Error] {e}"
+
+        # 多 Agent 写入冲突保护
+        from paperwise.tools.locks import FileLockManager
+        owner = getattr(self, "_agent_name", "main")
+        lock_id = FileLockManager(self.workspace).acquire(file_path, owner=owner)
+        if lock_id is None:
+            holder = FileLockManager(self.workspace).owner(file_path)
+            return (
+                f"[Blocked] 文件 '{path}' 正被 Agent '{holder or '?'}' 写入。\n"
+                f"请稍后重试，或使用不同的文件名避免冲突。"
+            )
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
-        size = len(content)
-        return f"Successfully wrote {size} characters ({len(content.splitlines())} lines) to {path}"
+        try:
+            file_path.write_text(content, encoding="utf-8")
+            size = len(content)
+            return f"Successfully wrote {size} characters ({len(content.splitlines())} lines) to {path}"
+        finally:
+            FileLockManager(self.workspace).release(file_path, lock_id)
 
 
 class EditFileTool(BaseTool):
@@ -192,21 +207,36 @@ class EditFileTool(BaseTool):
         if not file_path.exists():
             return f"[Error] File not found: {path}"
 
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return f"[Error] Cannot read file (binary or unknown encoding): {path}"
-
-        count = content.count(search)
-        if count == 0:
-            return f"[Error] Search string not found in {path}"
-        if count > 1:
+        # 多 Agent 写入冲突保护
+        from paperwise.tools.locks import FileLockManager
+        owner = getattr(self, "_agent_name", "main")
+        lock_mgr = FileLockManager(self.workspace)
+        lock_id = lock_mgr.acquire(file_path, owner=owner)
+        if lock_id is None:
+            holder = lock_mgr.owner(file_path)
             return (
-                f"[Error] Search string found {count} times in {path}. "
-                f"Please provide a more specific string that matches exactly once. "
-                f"Use read_file to see current content."
+                f"[Blocked] 文件 '{path}' 正被 Agent '{holder or '?'}' 写入。\n"
+                f"请稍后重试，或使用不同的文件名避免冲突。"
             )
 
-        new_content = content.replace(search, replace, 1)
-        file_path.write_text(new_content, encoding="utf-8")
-        return f"Successfully edited {path} (1 replacement)"
+        try:
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return f"[Error] Cannot read file (binary or unknown encoding): {path}"
+
+            count = content.count(search)
+            if count == 0:
+                return f"[Error] Search string not found in {path}"
+            if count > 1:
+                return (
+                    f"[Error] Search string found {count} times in {path}. "
+                    f"Please provide a more specific string that matches exactly once. "
+                    f"Use read_file to see current content."
+                )
+
+            new_content = content.replace(search, replace, 1)
+            file_path.write_text(new_content, encoding="utf-8")
+            return f"Successfully edited {path} (1 replacement)"
+        finally:
+            lock_mgr.release(file_path, lock_id)

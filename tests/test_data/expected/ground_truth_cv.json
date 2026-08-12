@@ -1,0 +1,79 @@
+{
+  "paper_id": "test_paper_cv",
+  "title": "SegNet-Lite: Efficient Semantic Segmentation with Depthwise Separable Convolutions",
+  "expected_findings": {
+    "main_contribution": "SegNet-Lite lightweight encoder-decoder with depthwise separable convolutions and Light Decoder",
+    "key_improvement": "78.3% mIoU at 42.1 FPS with only 2.3M parameters",
+    "datasets": ["Cityscapes"],
+    "baselines": ["PSPNet", "DeepLabV3", "BiSeNet", "ICNet"],
+    "reported_miou": 78.3,
+    "reported_fps": 42.1,
+    "reported_params": 2.3,
+    "ablation_components": ["depthwise separable convolutions", "auxiliary loss", "Light Decoder"]
+  },
+  "evaluation_criteria": {
+    "report_sections": [
+      "overview",
+      "motivation",
+      "methodology",
+      "experiments",
+      "critical_analysis",
+      "related_work",
+      "conclusion"
+    ],
+    "required_citations": [
+      "78.3",
+      "42.1",
+      "2.3",
+      "PSPNet",
+      "DeepLabV3",
+      "BiSeNet",
+      "depthwise separable"
+    ],
+    "must_include_numbers": [78.3, 42.1, 2.3, 81.2, 82.5],
+    "must_mention_limitations": [
+      "small objects",
+      "class imbalance",
+      "weather",
+      "domain shift"
+    ]
+  },
+  "agent_test_scenarios": [
+    {
+      "name": "basic_info_extraction",
+      "task": "What is the main contribution of this paper?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["SegNet-Lite", "depthwise separable", "Light Decoder"],
+      "max_steps": 5
+    },
+    {
+      "name": "numerical_fact_verification",
+      "task": "What mIoU does SegNet-Lite achieve on Cityscapes and how does it compare to BiSeNet?",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": ["78.3", "77.9", "0.4"],
+      "max_steps": 5
+    },
+    {
+      "name": "code_verification",
+      "task": "Write Python code to verify the FPS claim (42.1 FPS) and the parameter count (2.3M) from Table 1. Execute it.",
+      "expected_tools": ["code_interpreter"],
+      "expected_code_contains": ["42.1", "2.3", "fps", "params"],
+      "max_steps": 8
+    },
+    {
+      "name": "critical_analysis",
+      "task": "What are the limitations of this paper? Are there any unmentioned limitations?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["small objects", "class imbalance", "domain shift"],
+      "max_steps": 8
+    },
+    {
+      "name": "report_generation",
+      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
+      "expected_tools": ["write_file", "read_file", "grep"],
+      "min_output_files": ["report/report.md"],
+      "min_report_chars": 500,
+      "max_steps": 30
+    }
+  ]
+}

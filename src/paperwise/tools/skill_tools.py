@@ -1,4 +1,4 @@
-"""Skill 工具 — skill_list / skill_load
+"""Skill 工具 — skill_list / skill_load / discover_tool
 
 Agent 可以通过这两个工具主动发现和加载 Skills，
 而非仅依赖 system prompt 中的被动文字目录。
@@ -68,6 +68,82 @@ class SkillListTool(BaseTool):
         lines.append("使用 skill_load(name=\"...\") 加载具体 Skill。")
         lines.append("加载后请严格遵循 Skill 中的工作流程和最佳实践。")
 
+        return "\n".join(lines)
+
+
+class DiscoverTool(BaseTool):
+    """按关键词发现工具 — 返回匹配工具的完整定义（含参数示例）。
+
+    对应书中 4.8 节动态工具发现：让 Agent 在任务中自行查找
+    并理解尚未暴露的完整工具能力。
+    """
+
+    def __init__(self, workspace: Path, tool_registry=None):
+        super().__init__(workspace)
+        self._registry = tool_registry
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="discover_tool",
+            description=(
+                "按关键词搜索并返回匹配工具的完整定义（用途、参数、边界）。\n"
+                "当你需要：\n"
+                "- 了解某个工具的具体参数和示例\n"
+                "- 确认某个操作是否已有专门工具\n"
+                "- 探索当前可用的全部工具\n"
+                "时使用此工具。\n"
+                "DO NOT use for: 执行任务（直接调用对应工具）、加载 Skill（使用 skill_load）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "关键词，如 'read'、'search'、'python'。空字符串列出全部工具。",
+                    },
+                },
+                "required": ["query"],
+            },
+            risk=ToolRisk.LOW,
+        )
+
+    async def execute(self, query: str = "") -> str:
+        if not self._registry:
+            return "[Error] Tool registry not available"
+
+        q = query.strip().lower()
+        matches = []
+        for name in self._registry.list_names():
+            try:
+                tool = self._registry.get(name)
+            except KeyError:
+                continue
+            desc = tool.definition.description or ""
+            if (not q) or q in name.lower() or q in desc.lower():
+                matches.append(tool)
+
+        if not matches:
+            available = ", ".join(self._registry.list_names())
+            return (
+                f"未找到与 '{query}' 匹配的工具。\n"
+                f"当前全部工具：{available}\n"
+                f"可尝试关键词：read / search / file / python / skill / message / timer"
+            )
+
+        lines = [f"# 匹配工具 ({len(matches)})"]
+        for tool in matches[:5]:
+            d = tool.definition
+            lines.append(f"\n## {d.name}  [risk: {d.risk.value}]")
+            lines.append(f"  {d.description}")
+            params = d.parameters or {}
+            props = params.get("properties", {})
+            if props:
+                lines.append("  参数:")
+                for pname, pinfo in list(props.items())[:8]:
+                    lines.append(f"    - {pname}: {pinfo.get('description', '')}")
+        if len(matches) > 5:
+            lines.append(f"\n... 还有 {len(matches) - 5} 个匹配（可用更精确的关键词缩小范围）")
         return "\n".join(lines)
 
 

@@ -20,11 +20,33 @@
 """
 
 import json, re, math, time
+import asyncio
 from pathlib import Path
 from typing import Optional
 from collections import Counter
 from dataclasses import dataclass, field
 import numpy as np
+
+
+def run_coro(coro_factory):
+    """在当前线程安全地执行 async 协程（同步上下文桥接）。
+
+    背景：asyncio.get_event_loop() 在 asyncio.run() 之后会抛
+    "There is no current event loop"；而在已有运行中循环内直接
+    asyncio.run 又会冲突。此辅助函数两种场景都能处理：
+    - 无运行中循环 → 直接 asyncio.run
+    - 有运行中循环（如 FastAPI）→ 在独立线程中运行新循环
+    """
+    try:
+        asyncio.get_running_loop()
+        in_loop = True
+    except RuntimeError:
+        in_loop = False
+    if in_loop:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            return executor.submit(asyncio.run, coro_factory()).result()
+    return asyncio.run(coro_factory())
 
 
 @dataclass
@@ -187,7 +209,8 @@ class DenseRetriever:
         norms[norms == 0] = 1
         return vectors / norms
 
-    def _tokenize(self, text: str) -> list[str]:
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
         tokens = re.findall(r'[a-zA-Z]+', text.lower())
         for ch in re.findall(r'[一-鿿]+', text):
             tokens.extend([ch[i:i+2] for i in range(0, len(ch), 2)])
@@ -520,14 +543,7 @@ class KnowledgeBase:
             return await asyncio.gather(*tasks)
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                results = asyncio.ensure_future(batch_score())
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    results = executor.submit(lambda: asyncio.run(batch_score())).result()
-            else:
-                results = asyncio.run(batch_score())
+            results = run_coro(batch_score)
         except Exception as e:
             import logging
             logging.getLogger("paperwise").warning(f"Cross-encoder rerank failed: {e}")
@@ -571,13 +587,7 @@ class KnowledgeBase:
                 )
                 return resp.content.strip()
 
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    return executor.submit(lambda: asyncio.run(gen())).result()
-            else:
-                return asyncio.run(gen())
+            return run_coro(gen)
         except Exception as e:
             import logging
             logging.getLogger("paperwise").debug(f"KB operation failed: {e}")
@@ -620,13 +630,7 @@ class KnowledgeBase:
                 rewritten = resp.content.strip().strip('"').strip("'")
                 return rewritten if len(rewritten) > len(query) else query
 
-            import concurrent.futures
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor() as ex:
-                    return ex.submit(lambda: asyncio.run(rw())).result()
-            else:
-                return asyncio.run(rw())
+            return run_coro(rw)
         except Exception:
             return query
 
@@ -698,8 +702,9 @@ class KnowledgeBase:
         self.retriever.index(chunks)
         self._indexed = True
         elapsed = time.time() - t0
+        speed = f"{len(chunks) / elapsed:.0f}" if elapsed > 0 else "N/A"
         print(f"[RAG] Indexed {len(chunks)} chunks in {elapsed:.1f}s "
-              f"({len(chunks)/elapsed:.0f} chunks/s)")
+              f"({speed} chunks/s)")
 
     # ══════════ 持久化 ══════════
 
@@ -739,6 +744,31 @@ class KnowledgeBase:
 
     # ══════════ RAPTOR 层次化索引 ══════════
 
+    def _index_signature(self) -> str:
+        """文档集签名：文档 id + 基础 chunk 数（排除已生成的摘要节点）。"""
+        base_chunks = [
+            c for c in self.chunks.values()
+            if c.metadata.get("type") != "raptor_summary"
+        ]
+        return f"{'|'.join(sorted(self.docs))}:{len(base_chunks)}"
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        """与 DenseRetriever 共享的中英文 tokenizer。"""
+        return DenseRetriever._tokenize(text)
+
+    def _persist_index_cache(self, kind: str, data: dict) -> None:
+        try:
+            self.store.put("index_cache", kind, data)
+        except Exception:
+            pass
+
+    def _load_index_cache(self, kind: str) -> Optional[dict]:
+        try:
+            return self.store.get("index_cache", kind)
+        except Exception:
+            return None
+
     def build_raptor_tree(self, max_clusters: int = 10) -> int:
         """构建 RAPTOR 层次化摘要树。
 
@@ -757,6 +787,30 @@ class KnowledgeBase:
         if not self._llm_client:
             return 0
 
+        # 持久化命中：文档集未变化时直接恢复摘要节点（避免重复 LLM 调用）
+        signature = self._index_signature()
+        cached = self._load_index_cache("raptor")
+        if cached and cached.get("signature") == signature:
+            restored = 0
+            for node in cached.get("nodes", []):
+                cid = node.get("id")
+                if cid and cid not in self.chunks:
+                    self.chunks[cid] = Chunk(
+                        id=cid,
+                        content=node.get("content", ""),
+                        doc_id=node.get("doc_id", ""),
+                        chunk_index=len(self.chunks),
+                        metadata=node.get("metadata", {}),
+                    )
+                    restored += 1
+            if restored:
+                self._indexed = False
+            # 返回当前摘要节点总数（已存在 + 本次恢复）
+            return len([
+                c for c in self.chunks.values()
+                if c.metadata.get("type") == "raptor_summary"
+            ])
+
         if not self._indexed:
             self._reindex()
 
@@ -764,7 +818,24 @@ class KnowledgeBase:
         if len(chunks) < 5:
             return 0
 
-        return self._raptor_cluster_and_summarize(chunks, max_clusters, depth=0)
+        generated = self._raptor_cluster_and_summarize(chunks, max_clusters, depth=0)
+
+        # 持久化摘要节点，下次文档集未变时直接恢复
+        summary_nodes = [
+            {
+                "id": c.id,
+                "content": c.content,
+                "doc_id": c.doc_id,
+                "metadata": c.metadata,
+            }
+            for c in self.chunks.values()
+            if c.metadata.get("type") == "raptor_summary"
+        ]
+        self._persist_index_cache("raptor", {
+            "signature": signature,
+            "nodes": summary_nodes,
+        })
+        return generated
 
     def _raptor_cluster_and_summarize(self, nodes: list[Chunk],
                                        max_clusters: int, depth: int) -> int:
@@ -867,13 +938,7 @@ class KnowledgeBase:
                 )
                 return resp.content.strip()
 
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as ex:
-                    return ex.submit(lambda: asyncio.run(gen())).result()
-            else:
-                return asyncio.run(gen())
+            return run_coro(gen)
         except Exception as e:
             import logging
             logging.getLogger("paperwise").debug(f"KB operation failed: {e}")
@@ -892,6 +957,12 @@ class KnowledgeBase:
         if not self._llm_client:
             return {"entities": [], "relations": []}
 
+        # 持久化命中：文档集未变化时直接返回缓存图谱
+        signature = self._index_signature()
+        cached = self._load_index_cache("graph")
+        if cached and cached.get("signature") == signature:
+            return cached.get("graph", {"entities": [], "relations": []})
+
         # 从所有文档中提取实体和关系
         all_text = "\n\n".join(
             d.content[:2000] for d in list(self.docs.values())[:10]
@@ -899,7 +970,12 @@ class KnowledgeBase:
         if not all_text.strip():
             return {"entities": [], "relations": []}
 
-        return self._extract_entities_and_relations(all_text[:8000])
+        graph = self._extract_entities_and_relations(all_text[:8000])
+        self._persist_index_cache("graph", {
+            "signature": signature,
+            "graph": graph,
+        })
+        return graph
 
     def _extract_entities_and_relations(self, text: str) -> dict:
         """LLM 驱动的实体关系抽取。"""
@@ -922,13 +998,7 @@ class KnowledgeBase:
                 )
                 return json.loads(resp.content)
 
-            import asyncio, concurrent.futures
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor() as ex:
-                    return ex.submit(lambda: asyncio.run(gen())).result()
-            else:
-                return asyncio.run(gen())
+            return run_coro(gen)
         except Exception:
             return {"entities": [], "relations": []}
 

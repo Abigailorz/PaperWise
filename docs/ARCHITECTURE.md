@@ -1,7 +1,7 @@
 # PaperWise 完整架构文档 v0.4.1
 
 > 基于《深入理解 AI Agent：设计原理与工程实践》（李博杰 著, v1.4）全书知识体系
-> 审计达标：CRITICAL 0 降级 / HIGH 6/20 已修复 / MEDIUM 5/16 已修复 / LOW 2/8 已修复
+> 审计达标：CRITICAL 0 降级 / HIGH 15/20 已修复 / MEDIUM 5/16 已修复 / LOW 2/8 已修复
 
 ---
 
@@ -15,7 +15,7 @@ PaperWise 是一个多 Agent 协作的学术论文智能解读系统。输入 PD
 PaperWise Agent = Model + Harness + Environment
 
 Model:       DeepSeek / Kimi K3 / OpenAI / 任意 OpenAI 兼容 API
-Harness:     上下文管理(5层压缩) + 工具接口(16工具五类) + 约束/验证/纠正
+Harness:     上下文管理(5层压缩) + 工具接口(17工具五类) + 约束/验证/纠正
 Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 ```
 
@@ -23,11 +23,11 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 
 | 指标 | 值 |
 |------|-----|
-| Python 文件 | 50 个 |
-| 代码行数 | ~7,300 行 |
-| 工具数量 | 16 个（五类全覆盖） |
+| Python 文件 | 52 个 |
+| 代码行数 | ~8,100 行 |
+| 工具数量 | 17 个（五类全覆盖） |
 | Agent Skills | 3 个（学术阅读/报告生成/验证） |
-| 单元测试 | 22 个 |
+| 单元测试 | 38 个 |
 | 支持 LLM | DeepSeek / Kimi K3 / OpenAI / 任意兼容 API |
 | CRITICAL 降级 | 0（全部修复） |
 
@@ -62,10 +62,10 @@ Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
 │           ├─ 自动 TODO 推断                              │
 │           └─ 熔断器 + 指数退避重试                       │
 ├──────────────────────────────────────────────────────┤
-│ 工具层    16个工具 / 5个类别                             │
+│ 工具层    17个工具 / 5个类别                             │
 │           感知: read_file, glob, grep                    │
 │           执行: write/edit/code_interpreter/bash/request │
-│           技能: skill_list, skill_load                   │
+│           技能: skill_list, skill_load, discover_tool    │
 │           协作: spawn_subagent, send_message             │
 │           事件: set_timer, monitor_shell                 │
 │           沟通: ask_user, notify_user                    │
@@ -135,7 +135,7 @@ ReAct 循环 = 思考 → 行动 → 观察 → 重复
 
 ### 3.3 工具系统 (`tools/` ~1,300行)
 
-16 个工具，MCP 兼容，五类全覆盖：
+17 个工具，MCP 兼容，五类全覆盖：
 
 | 类别 | 工具 | 风险 | 实现质量 |
 |------|------|------|----------|
@@ -149,6 +149,7 @@ ReAct 循环 = 思考 → 行动 → 观察 → 重复
 | 执行 | request_file_access | MEDIUM | 白名单外路径授权申请（读/写） |
 | 技能 | skill_list | LOW | 渐进披露第一层：技能目录 |
 | 技能 | skill_load | LOW | 加载完整 SKILL.md 指令 |
+| 技能 | discover_tool | LOW | **动态工具发现**：按关键词返回完整定义 |
 | 协作 | spawn_subagent | MEDIUM | **真实 Agent 创建**（非桩） |
 | 协作 | send_message_to_agent | LOW | 多 Agent 消息传递 |
 | 事件 | set_timer | LOW | 异步回调 |
@@ -327,7 +328,7 @@ PAPERWISE_EMBEDDING_MODEL=text-embedding-3-small
 | 严重级别 | 总计 | 已修复 | 剩余 | 状态 |
 |----------|------|--------|------|------|
 | CRITICAL | 12 | 12 | 0 | ✅ 全部清除 |
-| HIGH | 20 | 6 | 14 | 核心已修复 |
+| HIGH | 20 | 15 | 5 | 核心已修复 |
 | MEDIUM | 16 | 5 | 11 | 持续优化中 |
 | LOW | 8 | 2 | 6 | 低优先级 |
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
@@ -18,7 +19,17 @@ from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 WEB_STATIC = ROOT / "src" / "paperwise" / "web" / "static"
 
-app = FastAPI(title="PaperWise API", version="0.4.1")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """应用生命周期：启动后台周期任务，关闭时清理。"""
+    task = asyncio.create_task(_periodic_flush())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="PaperWise API", version="0.4.1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # 全局 Session 管理
@@ -41,6 +52,37 @@ async def create_session():
     tid = uuid.uuid4().hex[:8]
     sessions[tid] = None  # 延迟初始化（等第一个消息或文件上传）
     return {"session_id": tid, "status": "created"}
+
+
+@app.get("/api/sessions")
+async def list_sessions():
+    """列出历史会话（从磁盘存储恢复元数据）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.storage import create_storage
+
+    ws_dir = get_settings().workspace_dir
+    items = []
+    for d in sorted(ws_dir.glob("session_*")):
+        sessions_dir = d / ".sessions"
+        if not d.is_dir() or not sessions_dir.exists():
+            continue
+        try:
+            store = create_storage("sqlite", sessions_dir)
+            keys = store.list_keys("sessions")
+        except Exception:
+            continue
+        for k in keys:
+            data = store.get("sessions", k) or {}
+            items.append({
+                "session_id": data.get("session_id", k),
+                "created_at": data.get("created_at", ""),
+                "last_active": data.get("last_active", ""),
+                "topic": data.get("topic", ""),
+                "current_paper": data.get("current_paper", ""),
+                "message_count": data.get("message_count", 0),
+            })
+    items.sort(key=lambda x: x["last_active"], reverse=True)
+    return {"sessions": items}
 
 
 @app.post("/api/sessions/{sid}/upload")
@@ -168,6 +210,13 @@ async def _ensure_session(sid: str, workspace: Path) -> "AgentSession":
     memory = UserMemory(global_store / "memory")     # 跨 Session 共享
     kb = KnowledgeBase(global_store / "kb")           # 跨 Session 共享
     kb.set_llm_client(llm)
+    # 周期性记忆整合（间隔内自动跳过）
+    try:
+        mem_report = memory.maybe_consolidate()
+        if not mem_report.get("skipped"):
+            print(f"[Memory] Consolidate: {mem_report}")
+    except Exception:
+        pass
     # Skills 目录：使用项目根目录的 skills/
     skills_dir = ROOT / "skills"
     if not skills_dir.exists():
@@ -241,15 +290,30 @@ async def _ensure_session(sid: str, workspace: Path) -> "AgentSession":
     access_tool = tools.get("request_file_access")
     access_tool._user_confirm = confirm_file_access
 
-    session = AgentSession(
-        workspace=workspace,
-        llm_client=llm,
-        tools=tools,
-        harness=harness,
-        memory=memory,
-        knowledge_base=kb,
-        skills=skills,
-    )
+    # 尝试从磁盘恢复历史会话（服务重启后仍可继续对话）
+    restored = None
+    try:
+        restored = AgentSession.load(
+            sid, workspace, llm, tools, harness,
+            memory=memory, knowledge_base=kb, skills=skills,
+        )
+    except Exception:
+        restored = None
+
+    if restored is not None:
+        session = restored
+        print(f"[Session] Restored session {sid} from disk")
+    else:
+        session = AgentSession(
+            workspace=workspace,
+            llm_client=llm,
+            tools=tools,
+            harness=harness,
+            memory=memory,
+            knowledge_base=kb,
+            skills=skills,
+            session_id=sid,
+        )
 
     # 注册事件 → WebSocket 广播
     def on_event(etype, detail):
@@ -323,11 +387,6 @@ async def _periodic_flush():
                 combined = "\n".join(ws_buffer[sid])
                 ws_buffer[sid] = []
                 await _send_ws(sid, combined)
-
-
-@app.on_event("startup")
-async def startup():
-    asyncio.create_task(_periodic_flush())
 
 
 # ═══════════ 静态文件 ═══════════

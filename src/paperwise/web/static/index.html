@@ -157,6 +157,7 @@ async function init() {
   const d = await r.json();
   sid = d.session_id;
   connectWS(sid);
+  loadSessions();
 }
 init();
 
@@ -315,6 +316,9 @@ async function newSession() {
   const r = await fetch('/api/sessions', {method:'POST'});
   const d = await r.json();
   sid = d.session_id; paperDir = null; reportMd = '';
+  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
+  const cur = document.querySelector('.sess-item[data-sid="current"]');
+  if (cur) cur.classList.add('active');
   document.getElementById('chatMessages').innerHTML = `
     <div class="welcome">
       <div class="icon">📄</div><h2>新对话已开始</h2>
@@ -324,7 +328,59 @@ async function newSession() {
   document.getElementById('reportPanel').classList.remove('show');
   connectWS(sid);
 }
-function switchSession(s) {}
+function switchSession(s) {
+  if (s === 'current') {
+    document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
+    const cur = document.querySelector('.sess-item[data-sid="current"]');
+    if (cur) cur.classList.add('active');
+  }
+}
+
+// ═══════════ 历史会话恢复 ═══════════
+async function loadSessions() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    const list = document.getElementById('sessionList');
+    for (const s of (d.sessions || [])) {
+      if (s.session_id === sid) continue;
+      const div = document.createElement('div');
+      div.className = 'sess-item';
+      div.dataset.sid = s.session_id;
+      const title = (s.current_paper || s.topic || s.session_id).slice(0, 18);
+      const meta = (s.last_active || '').slice(0, 16);
+      div.innerHTML = `<div class="title">${title}</div><div class="meta">${meta}</div>`;
+      div.onclick = () => resumeSession(s.session_id, title, s.current_paper);
+      list.insertBefore(div, list.lastElementChild);
+    }
+  } catch(_) {}
+}
+
+async function resumeSession(newSid, title, currentPaper) {
+  sid = newSid; reportMd = '';
+  paperDir = currentPaper || null;
+  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
+  const target = document.querySelector(`.sess-item[data-sid="${newSid}"]`);
+  if (target) target.classList.add('active');
+  document.getElementById('chatMessages').innerHTML = '';
+  document.getElementById('reportPanel').classList.remove('show');
+  document.getElementById('paperLabel').textContent = paperDir ? `📄 ${title}` : '';
+  connectWS(sid);
+  showTyping('恢复会话...');
+  try {
+    const r = await fetch(`/api/sessions/${sid}/history`);
+    const d = await r.json();
+    removeTyping();
+    const msgs = d.messages || [];
+    for (const m of msgs) addMessage(m.role, m.content);
+    if (!msgs.length) {
+      document.getElementById('chatMessages').innerHTML =
+        `<div class="welcome"><div class="icon">📄</div><h2>会话已恢复</h2><p style="color:var(--dim)">${title}</p></div>`;
+    }
+  } catch(e) {
+    removeTyping();
+  }
+}
 
 // ═══════════ 辅助 ═══════════
 function toast(msg) {

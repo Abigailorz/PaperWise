@@ -23,7 +23,7 @@ paperwise generate pptx workspace/{paper}/     # 生成 PPT
 paperwise evaluate report.md workspace/{paper}/ # 评估质量
 
 # 4. 运行测试
-pytest tests/ -v                               # 22 个单元测试
+pytest tests/ -v                               # 38 个单元测试
 python tests/run_agent_tests.py                # Agent 能力测试
 ```
 
@@ -65,10 +65,10 @@ paperwise evaluate workspace/{paper}/report/report.md workspace/{paper}/
 
 ```
 PaperWise/
-├── src/paperwise/              ← 50 个 Python 文件 (~7300 行)
+├── src/paperwise/              ← 52 个 Python 文件 (~8100 行)
 │   ├── core/                   # Agent 核心 (ReAct, LLM客户端, Session)
 │   ├── harness/                # Harness 工程 (5层压缩, 3层护栏, 状态栏)
-│   ├── tools/                  # 16 工具五类 (感知/执行/协作/事件/沟通)
+│   ├── tools/                  # 17 工具五类 (感知/执行/协作/事件/沟通)
 │   ├── parsers/                # PDF 解析 (PyMuPDF)
 │   ├── agents/                 # 多 Agent 编排 (Pipeline/Parallel/Adversarial)
 │   ├── generators/             # 报告 + PPT 生成
@@ -80,7 +80,7 @@ PaperWise/
 │   ├── cli/                    # CLI (Typer + Rich)
 │   └── config/                 # 配置 (25 项可配置)
 ├── skills/                     # Skill 定义 (Markdown)
-├── tests/                      # 22 单元测试 + Agent 能力测试 + MCP 集成脚本
+├── tests/                      # 38 单元测试 + Agent 能力测试 + MCP 集成脚本
 │   └── test_data/              # 测试数据集
 ├── docs/                       # 文档
 │   ├── ARCHITECTURE.md         # 完整架构文档
@@ -147,7 +147,7 @@ RAG: Dense + Sparse + RRF + Cross-Encoder + HyDE + RAPTOR + GraphRAG
 | 严重级别 | 总计 | 已修复 | 剩余 |
 |----------|------|--------|------|
 | CRITICAL | 12 | **12** | **0** |
-| HIGH | 20 | 6 | 14 |
+| HIGH | 20 | 15 | 5 |
 | MEDIUM | 16 | 5 | 11 |
 | LOW | 8 | 2 | 6 |
 

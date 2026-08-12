@@ -118,6 +118,12 @@ def analyze(
         memory = UserMemory(global_store / "memory")
         kb = KnowledgeBase(global_store / "kb")
         kb.set_llm_client(llm)
+        try:
+            mem_report = memory.maybe_consolidate()
+            if not mem_report.get("skipped"):
+                console.print(f"  [dim]记忆整合完成: {mem_report}[/dim]")
+        except Exception:
+            pass
         # Skills 目录显式指定
         _root = Path(__file__).resolve().parent.parent.parent.parent
         skills = SkillLoader(_root / "skills")
@@ -147,6 +153,7 @@ def analyze(
         session = AgentSession(
             workspace=parsed.output_dir, llm_client=llm, tools=tools,
             harness=harness, memory=memory, knowledge_base=kb, skills=skills,
+            session_id=parsed.paper_id,
         )
         # 注入 skill_loader 到 skill 工具
         tools.set_skill_loader(skills)
@@ -196,6 +203,75 @@ def analyze(
 
     try:
         asyncio.run(run_analysis())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
+    except Exception as e:
+        console.print(f"[red]✗ Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def pipeline(
+    pdf_path: Path = typer.Argument(..., help="PDF 论文路径"),
+    model: str = typer.Option("deepseek-chat", "--model", "-m", help="LLM 模型"),
+    provider: str = typer.Option("deepseek", "--provider", "-p", help="LLM 提供商"),
+    max_review_rounds: int = typer.Option(3, "--max-review-rounds", help="最大审核轮次"),
+):
+    """端到端流水线 — 解析 → 分析 → 报告 → 对抗式审核 → 修订（revise-until-pass）"""
+    from paperwise.config.settings import get_settings
+    from paperwise.core.llm_client import LLMClient
+    from paperwise.agents.orchestrator import AgentOrchestrator
+    from paperwise.parsers.pdf_parser import PDFParser
+
+    console.print(Panel(
+        f"Pipeline: [bold]{pdf_path.name}[/bold]\n"
+        f"Model: {model} ({provider}) | Max review rounds: {max_review_rounds}",
+        title="PaperWise Pipeline"
+    ))
+
+    async def run_pipeline():
+        settings = get_settings()
+        parser = PDFParser()
+        console.print("[cyan]→[/cyan] Parsing PDF...")
+        parsed = parser.parse(str(pdf_path))
+        console.print(f"  [green]✓[/green] Parsed → {parsed.output_dir}")
+
+        llm = LLMClient(provider=provider, model=model)
+        orchestrator = AgentOrchestrator(
+            llm_client=llm, workspace=parsed.output_dir, model=model,
+            max_steps_per_agent=settings.max_steps,
+        )
+
+        def on_event(etype, detail):
+            if etype in ("agent_start", "pipeline"):
+                console.print(f"  [cyan]▶[/cyan] {detail}")
+            elif etype == "review_round":
+                console.print(f"\n  [magenta]🔍[/magenta] {detail}")
+            elif etype == "review_revise":
+                console.print(f"  [yellow]✏️[/yellow] {detail}")
+            elif etype == "review_done":
+                console.print(f"  [green]✅[/green] {detail}")
+            elif etype == "review_manual":
+                console.print(f"  [red]⚠[/red] {detail}")
+            elif etype == "agent_done":
+                console.print(f"  [green]✓[/green] {detail}")
+            elif etype == "agent_error":
+                console.print(f"  [red]✗[/red] {detail}")
+
+        orchestrator.on_event(on_event)
+        result = await orchestrator.run_paper_analysis(
+            parsed.output_dir, max_review_rounds=max_review_rounds,
+        )
+
+        console.print("─" * 60)
+        status_icon = "✅" if result["status"] == "passed" else (
+            "⚠" if result["status"] == "needs_manual_review" else "❌")
+        console.print(f"\n{status_icon} Pipeline status: [bold]{result['status']}[/bold]")
+        console.print(f"  Review record: {result.get('record_path', 'N/A')}")
+        console.print(f"  Report: {parsed.output_dir / 'report' / 'report.md'}")
+
+    try:
+        asyncio.run(run_pipeline())
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
     except Exception as e:
