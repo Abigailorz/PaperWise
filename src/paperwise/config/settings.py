@@ -15,7 +15,14 @@ class Settings(BaseSettings):
         default="deepseek", alias="PAPERWISE_LLM_PROVIDER"
     )
     default_model: str = Field(default="deepseek-chat", alias="PAPERWISE_DEFAULT_MODEL")
+
+    # === Judge（异源评估，独立于主模型，可单独换 provider / key / model / url）===
+    judge_provider: Literal["deepseek", "moonshot", "openai", "openai_compatible"] = Field(
+        default="deepseek", alias="PAPERWISE_JUDGE_PROVIDER"
+    )
     judge_model: str = Field(default="deepseek-chat", alias="PAPERWISE_JUDGE_MODEL")
+    judge_api_key: str = Field(default="", alias="PAPERWISE_JUDGE_API_KEY")
+    judge_base_url: str = Field(default="", alias="PAPERWISE_JUDGE_BASE_URL")
 
     # === API Keys ===
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
@@ -38,6 +45,7 @@ class Settings(BaseSettings):
     # === Agent Defaults ===
     max_steps: int = Field(default=25, alias="PAPERWISE_MAX_STEPS")
     token_budget: int = Field(default=180_000, alias="PAPERWISE_TOKEN_BUDGET")
+    context_window: int = Field(default=128_000, alias="PAPERWISE_CONTEXT_WINDOW")
     temperature: float = Field(default=0.3, alias="PAPERWISE_TEMPERATURE")
     time_budget_seconds: int = Field(default=1800, alias="PAPERWISE_TIME_BUDGET")
     early_term_threshold: int = Field(default=2, alias="PAPERWISE_EARLY_TERM_THRESHOLD")
@@ -74,6 +82,42 @@ class Settings(BaseSettings):
             "openai_compatible": self.openai_base_url,
         }
         return provider_urls.get(self.llm_provider, self.openai_base_url)
+
+    @property
+    def judge_api_key_resolved(self) -> str:
+        """Judge API key；未单独配置时回退到对应 provider 的主 key。"""
+        if self.judge_api_key:
+            return self.judge_api_key
+        provider_keys = {
+            "deepseek": self.deepseek_api_key,
+            "moonshot": self.moonshot_api_key,
+            "openai": self.openai_api_key,
+            "openai_compatible": self.openai_api_key,
+        }
+        return provider_keys.get(self.judge_provider, "")
+
+    @property
+    def judge_base_url_resolved(self) -> str:
+        """Judge base URL；未单独配置时回退到对应 provider 的默认 URL。"""
+        if self.judge_base_url:
+            return self.judge_base_url
+        provider_urls = {
+            "deepseek": self.deepseek_base_url,
+            "moonshot": self.moonshot_base_url,
+            "openai": self.openai_base_url,
+            "openai_compatible": self.openai_base_url,
+        }
+        return provider_urls.get(self.judge_provider, self.openai_base_url)
+
+    def build_judge_llm(self):
+        """构建异源 Judge 的 LLMClient（独立于主模型）。"""
+        from paperwise.core.llm_client import LLMClient
+        return LLMClient(
+            provider=self.judge_provider,
+            model=self.judge_model,
+            api_key=self.judge_api_key_resolved,
+            base_url=self.judge_base_url_resolved,
+        )
 
     model_config = SettingsConfigDict(
         env_file=".env",

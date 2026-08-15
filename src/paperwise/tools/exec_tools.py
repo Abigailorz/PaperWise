@@ -45,11 +45,11 @@ class CodeInterpreterTool(BaseTool):
     """在隔离的 subprocess 中执行 Python 代码。
 
     安全措施：
-    - 使用 -I 标志（隔离模式，不加载用户 site-packages）
+    - 使用 -I 标志（隔离模式，不加载用户级 site-packages；项目环境内的第三方库仍可用）
     - 在临时 scratch 目录中执行
     - 30 秒超时
     - 捕获 stdout/stderr 分离
-    - 禁止网络访问（-I 模式 + 无外部模块）
+    - 无网络隔离（当前未实现网络拦截，仅依赖超时与临时目录）
 
     对应书中 7 核心工具之一 + 4.7.5 节虚拟身份与隔离执行环境
     """
@@ -62,12 +62,12 @@ class CodeInterpreterTool(BaseTool):
                 "Execute Python code in a sandboxed subprocess. "
                 "Use when you need to: verify mathematical claims, reproduce "
                 "statistical tests from the paper, generate plots, or process "
-                "structured data. "
-                "Available modules: math, statistics, json, csv, re, "
-                "collections, itertools, functools. "
+                "structured data. The Python standard library is available, and "
+                "third-party packages installed in the project environment "
+                "(such as pptx, numpy, matplotlib) are also importable. "
                 "DO NOT use for: simple arithmetic (state the result directly), "
                 "file operations (use read_file/write_file), network requests "
-                "(not available in sandbox)."
+                "(unreliable in sandbox)."
             ),
             parameters={
                 "type": "object",

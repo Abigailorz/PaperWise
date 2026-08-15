@@ -107,9 +107,18 @@ class AgentSession:
 - 调用 grep 搜索论文中的具体信息
 - 调用 write_file 保存分析结果和报告
 - 调用 code_interpreter 验证论文中的数据声明
+- 调用 skill_list 查看可用技能；当任务匹配某个技能时，用 skill_load 加载并严格按其流程执行（例如生成 PPT 应优先加载 nature-paper2ppt 技能）
+- 调用 load_skill_resource 读取技能引用的子文件（manifest.yaml / references/ / static/ 等）
+- 调用 generate_pptx 作为兜底生成 .pptx（仅当不需要遵循特定技能流程时使用）
 - 分析完成后主动提出："需要我生成正式报告吗？" 或 "需要做成 PPT 吗？"
 - 记住用户的偏好和反馈
 </available_actions>
+
+<skill_selection>
+开始任务前，先调用 skill_list 查看可用技能。如果某项技能的 description 与当前任务匹配，
+必须先用 skill_load 加载它，并严格按其流程执行，不要凭记忆或经验跳过 skill。
+加载后若 SKILL.md 要求读取子文件，用 load_skill_resource 按相对路径读取。
+</skill_selection>
 
 <output_style>
 - 用中文回复
@@ -144,7 +153,9 @@ class AgentSession:
         )
         self.callbacks: list[Callable] = []
         self._step_count = 0
-        self._max_steps_per_turn = 15  # 每轮对话最多 15 步
+        self._total_steps = 0
+        self._max_steps_per_turn = 120  # 每轮对话最多 120 步（长任务靠实时进度 + 上下文压缩兜底）
+        self._hard_cap = 300  # 一轮对话的硬上限（软上限触发后自动续跑）
 
         # 初始化系统消息
         self.state.messages = [Message(role=Role.SYSTEM, content=self._build_system_prompt())]
@@ -156,7 +167,10 @@ class AgentSession:
         # Token 预算跟踪（对话场景上下文压缩的触发依据）
         from paperwise.config.settings import get_settings
         self._tokens_used = 0
+        self._last_prompt_tokens = 0
         self._token_limit = get_settings().token_budget
+        self._context_window = get_settings().context_window
+        self._compress_failures = 0
 
     def on_event(self, cb: Callable):
         self.callbacks.append(cb)
@@ -180,6 +194,9 @@ class AgentSession:
         """
         self.state.last_active = time.strftime("%Y-%m-%d %H:%M:%S")
         self._step_count = 0
+        # 每轮对话重置工具暴露（避免上一轮 skill 的工具绑定泄漏到本轮）
+        if hasattr(self.tools, "activate_all"):
+            self.tools.activate_all()
 
         # 记忆注入：每轮对话时注入用户记忆
         memory_context = ""
@@ -194,14 +211,29 @@ class AgentSession:
         self.state.messages.append(Message(role=Role.USER, content=enhanced))
         self._emit("user_msg", user_message[:100])
 
-        # === ReAct 循环 ===
+        # === ReAct 循环（软上限自动续跑，硬上限兜底） ===
         try:
-            while self._step_count < self._max_steps_per_turn:
+            self._total_steps = 0
+            while self._total_steps < self._hard_cap:
+                if self._step_count >= self._max_steps_per_turn:
+                    self._emit("status", f"已执行 {self._total_steps} 步，自动继续处理...")
+                    self._step_count = 0
+
                 # Pre-LLM 钩子
                 self.harness.pre_llm(self._build_agent_state())
 
                 # 调用 LLM
-                self._emit("thinking", f"思考中... (第{self._step_count+1}步)")
+                self._emit("step", f"{self._total_steps + 1}/{self._hard_cap}")
+                self._emit("thinking", f"思考中... (第{self._total_steps + 1}/{self._hard_cap}步)")
+                # 上下文压缩：接近窗口阈值时压缩历史（带失败熔断）
+                if (self._last_prompt_tokens > 0
+                        and self._last_prompt_tokens > 0.8 * self._context_window
+                        and self._compress_failures < 3):
+                    self._emit("status", "上下文接近上限，正在压缩历史...")
+                    ok = await self._compress_context()
+                    self._compress_failures = 0 if ok else self._compress_failures + 1
+                    if ok:
+                        self._last_prompt_tokens = 0
                 response = await self._call_llm()
 
                 self.harness.post_llm(self._build_agent_state(), response)
@@ -243,8 +275,9 @@ class AgentSession:
                     return "抱歉，我遇到了一些问题。能换一种方式描述你的需求吗？"
 
                 self._step_count += 1
+                self._total_steps += 1
 
-            # 步数超限
+            # 达到硬上限
             return ("分析过程较长，我已经收集了一些信息。"
                     "需要我基于目前的发现先生成一个初步回复吗？"
                     "或者你可以让我'继续'来完成分析。")
@@ -275,6 +308,33 @@ class AgentSession:
 
             # 将论文元数据注入对话上下文
             meta = parsed.metadata
+            # 记忆驱动的兴趣画像：从论文标题/摘要/关键词提取主题并写入记忆
+            try:
+                import re as _re
+                from paperwise.recommender import extract_paper_topics
+                _arxiv_id = ""
+                _m = _re.search(r"(\d{4}\.\d{4,5})", file_path.name)
+                if _m:
+                    _arxiv_id = _m.group(1)
+                _topics = extract_paper_topics(
+                    title=meta.get("title", ""),
+                    abstract=(parsed.text or "")[:3000],
+                    keywords=meta.get("keywords", ""),
+                )
+                if _topics and self.memory:
+                    self.memory.remember(
+                        category="knowledge",
+                        data={
+                            "title": meta.get("title", ""),
+                            "arxiv_id": _arxiv_id,
+                            "topics": json.dumps(_topics, ensure_ascii=False),
+                        },
+                        backstory=f"用户解读了论文《{meta.get('title', '')}》，用于自动学习研究兴趣",
+                        confidence=0.7,
+                        tags=["paper", "interest_signal"],
+                    )
+            except Exception:
+                pass
             paper_summary = (
                 f"<paper_loaded>\n"
                 f"论文已解析完成：\n"
@@ -510,10 +570,15 @@ class AgentSession:
                 args = {}
             tool_calls.append(ToolCall(id=tid, name=td["name"], arguments=args))
 
-        # 估算本次请求的 token 消耗（流式响应无精确 usage 时使用）
-        self._tokens_used += (
-            sum(len(json.dumps(m, ensure_ascii=False)) for m in api_msgs) // 3
-        )
+        # 估算本次请求的 token 消耗（用 LLMClient 的计数，更接近真实）
+        try:
+            prompt_tokens = self.llm.count_tokens(
+                json.dumps(api_msgs, ensure_ascii=False))
+        except Exception:
+            prompt_tokens = sum(
+                len(json.dumps(m, ensure_ascii=False)) for m in api_msgs) // 2
+        self._last_prompt_tokens = prompt_tokens
+        self._tokens_used += prompt_tokens
 
         return LLMResponse(content=full_content, tool_calls=tool_calls,
                            stop_reason="tool_calls" if tool_calls else "stop")
@@ -529,6 +594,70 @@ class AgentSession:
         except Exception as e:
             return ToolResult(tool_call_id=tc.id, name=tc.name,
                             output=f"[Error] {e}", is_error=True)
+
+    async def _compress_context(self) -> bool:
+        """把较早的对话历史做一次 LLM 总结，保留 system + 最近若干条。
+
+        遵循分层压缩的「最后手段」层：上下文接近阈值时，用一次 LLM 调用把
+        大段历史蒸馏成结构化摘要，避免上下文腐化/溢出；失败不阻断主流程。
+        """
+        if not self.llm:
+            return False
+
+        system_msgs = [m for m in self.state.messages if m.role == Role.SYSTEM]
+        other = [m for m in self.state.messages if m.role != Role.SYSTEM]
+        if len(other) < 24:
+            return False
+
+        keep = 8
+        head, tail = other[:-keep], other[-keep:]
+        history = self._render_history(head)
+
+        prompt = (
+            "你是上下文压缩器。以下是 Agent 与用户的对话历史与工具调用轨迹。\n"
+            "请生成不超过 900 字的结构化摘要，必须保留：\n"
+            "1. 用户的目标与当前任务；\n"
+            "2. 已完成的关键步骤、决策和结论；\n"
+            "3. 关键数字、文件名/路径、论文要点；\n"
+            "4. 未完成的 TODO 和下一步。\n"
+            "只保留事实，不要编造，不确定就省略。\n\n"
+            f"{history}\n\n结构化摘要："
+        )
+
+        try:
+            resp = await self.llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1, max_tokens=1200,
+            )
+            summary = (resp.content or "").strip()
+            if not summary:
+                return False
+
+            self.state.messages = system_msgs + [
+                Message(role=Role.USER,
+                        content=f"<compressed_context>\n{summary}\n</compressed_context>")
+            ] + tail
+            self._emit("status", "上下文已压缩（保留系统提示与最近对话）")
+            return True
+        except Exception as e:
+            self._emit("warn", f"上下文压缩失败：{type(e).__name__}")
+            return False
+
+    @staticmethod
+    def _render_history(msgs) -> str:
+        """把历史消息渲染成压缩提示词可读的紧凑文本。"""
+        lines = []
+        for m in msgs:
+            if m.role == Role.TOOL:
+                txt = (m.content or "")[:200].replace("\n", " ")
+                lines.append(f"[tool] {txt}")
+            elif m.role == Role.ASSISTANT and m.tool_calls:
+                names = ", ".join(tc.name for tc in m.tool_calls)
+                lines.append(f"[assistant→tools] {names}")
+            elif m.content:
+                txt = (m.content or "")[:300].replace("\n", " ")
+                lines.append(f"[{m.role.value}] {txt}")
+        return "\n".join(lines)[-8000:]
 
     def _save(self):
         """持久化到存储后端。"""
@@ -567,7 +696,8 @@ class AgentSession:
             session.tools = tools; session.harness = harness
             session.memory = memory; session.knowledge_base = knowledge_base
             session.skills = skills; session.callbacks = []
-            session._step_count = 0; session._max_steps_per_turn = 15
+            session._step_count = 0; session._total_steps = 0
+            session._max_steps_per_turn = 120; session._hard_cap = 300
             session._backend = backend; session._session_store = store
 
             session.session_id = data["session_id"]; session._session_dir = workspace / ".sessions" / session_id
@@ -578,7 +708,10 @@ class AgentSession:
             )
             from paperwise.config.settings import get_settings
             session._tokens_used = 0
+            session._last_prompt_tokens = 0
             session._token_limit = get_settings().token_budget
+            session._context_window = get_settings().context_window
+            session._compress_failures = 0
             for m in data.get("messages", []):
                 session.state.messages.append(Message(role=Role(m["role"]), content=m.get("content","")))
 

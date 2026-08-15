@@ -110,9 +110,10 @@ class PaperAnalystConfig:
 
 ### 阶段 4：生成报告
 
-1. 为每个章节（概览、动机、方法、实验、批判分析、相关工作、结论）写入 report/sections/{{name}}.md
-2. 组装最终报告到 report/report.md（含 YAML frontmatter 和目录）
-3. 每条声明必须引用原文来源（章节/行号）
+1. 先写入 report/report.md 骨架（含 YAML frontmatter 和目录），确保报告文件始终存在
+2. 为每个章节（概览、动机、方法、实验、批判分析、相关工作、结论）写入 report/sections/{{name}}.md
+3. 最后重新组装 report/report.md，按顺序内联各章节
+4. 每条声明必须引用原文来源（章节/行号）
 
 ### 重要提醒
 - 充分使用 grep 搜索具体数据点

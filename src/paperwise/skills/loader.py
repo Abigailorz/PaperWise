@@ -36,6 +36,8 @@ class SkillLoader:
         self.skills_dir = Path(skills_dir)
         self._catalog: list[dict] = []
         self._skills: dict[str, Path] = {}
+        self._skill_dirs: dict[str, Path] = {}
+        self._allowed_tools: dict[str, list[str]] = {}
         self._load_catalog()
 
     def _load_catalog(self) -> None:
@@ -55,13 +57,25 @@ class SkillLoader:
                 metadata = self._parse_frontmatter(skill_file)
                 name = metadata.get("name", skill_dir.name)
                 description = metadata.get("description", "")
-                self._catalog.append({"name": name, "description": description})
+                allowed_tools = metadata.get("allowed-tools", [])
+                if not isinstance(allowed_tools, list):
+                    allowed_tools = []
+                self._catalog.append({
+                    "name": name,
+                    "description": description,
+                    "allowed_tools": allowed_tools,
+                })
                 self._skills[name] = skill_file
+                self._skill_dirs[name] = skill_dir
+                self._allowed_tools[name] = allowed_tools
             except Exception:
                 continue
 
     def _parse_frontmatter(self, filepath: Path) -> dict:
-        """解析 SKILL.md 的 YAML frontmatter（轻量实现，无需 pyyaml）。"""
+        """解析 SKILL.md 的 YAML frontmatter（轻量实现，无需 pyyaml）。
+
+        支持标量、`>`/`|` 折叠块、以及 `- item` / `[a, b]` 列表。
+        """
         import re
         content = filepath.read_text(encoding="utf-8")
         if not content.startswith("---"):
@@ -69,45 +83,64 @@ class SkillLoader:
         parts = content.split("---", 2)
         if len(parts) < 3:
             return {}
-        raw = parts[1].strip()
+        raw = parts[1].strip("\n")
         result: dict = {}
-        current_key: str = ""
-        current_val: list[str] = []
-        for line in raw.split("\n"):
-            # 匹配 "key: value" 或 "key: >" 折叠块
-            if m := re.match(r'^(\w[\w_-]*)\s*:\s*(.*)', line):
-                self._flush_kv(current_key, current_val, result)
-                current_key = m.group(1)
-                val = m.group(2).strip()
-                current_val = [val] if val and val != ">" else []
-            elif current_key and line.strip():
-                current_val.append(line.strip())
-        self._flush_kv(current_key, current_val, result)
-        return result
+        lines = raw.split("\n")
+        i = 0
+        while i < len(lines):
+            m = re.match(r'^([\w][\w\-]*)\s*:\s*(.*)$', lines[i].strip())
+            if not m:
+                i += 1
+                continue
+            key, val = m.group(1), m.group(2).strip()
 
-    @staticmethod
-    def _flush_kv(key: str, val_parts: list[str], result: dict) -> None:
-        if not key:
-            return
-        result[key] = " ".join(val_parts).strip() if val_parts else ""
+            if val in ("", ">", "|"):
+                # 折叠/字面块 或 列表
+                block: list[str] = []
+                has_list = False
+                i += 1
+                while i < len(lines) and not re.match(
+                    r'^\s*[\w][\w\-]*\s*:', lines[i]
+                ):
+                    s = lines[i].strip()
+                    if s:
+                        if s.startswith("- "):
+                            has_list = True
+                            block.append(s[2:].strip())
+                        else:
+                            block.append(s)
+                    i += 1
+                result[key] = block if has_list else " ".join(block)
+                continue
+
+            if val.startswith("[") and val.endswith("]"):
+                result[key] = [
+                    x.strip().strip("'\"")
+                    for x in val[1:-1].split(",")
+                    if x.strip()
+                ]
+                i += 1
+                continue
+
+            result[key] = val
+            i += 1
+        return result
 
     # === 公开接口 ===
 
     def get_catalog_text(self) -> str:
-        """生成 Skill 元数据目录文本（注入 system prompt 用，约 200 tokens）。
-
-        对应书中 2.5.2 节：元数据目录在 system prompt 中的位置
-        """
+        """生成 Skill 元数据目录文本（注入 system prompt 用）。"""
         if not self._catalog:
             return ""
 
         lines = ["<available_skills>"]
         for skill in self._catalog:
-            lines.append(f"  - {skill['name']}: {skill['description'][:100]}")
+            lines.append(f"  - {skill['name']}: {skill['description'][:200]}")
         lines.append("</available_skills>")
         lines.append(
-            "To use a skill, call skill_list to see full descriptions, "
-            "then skill_load(name=\"...\") to activate it."
+            "使用规则：开始任何任务前，先判断是否有 skill 的 description 与当前任务匹配；"
+            "有则立即 skill_load(name=\"...\") 加载并严格遵循，"
+            "再用 load_skill_resource(skill=\"...\", resource=\"...\") 读取其引用的子文件。"
         )
         return "\n".join(lines)
 
@@ -123,6 +156,45 @@ class SkillLoader:
         if name not in self._skills:
             return None
         return self._skills[name].read_text(encoding="utf-8")
+
+    def load_resource(self, name: str, rel_path: str) -> Optional[str]:
+        """按需加载 skill 目录内的子文件（references/static/assets 等）。
+
+        rel_path 是相对于该 skill 目录的相对路径，例如：
+        - manifest.yaml
+        - references/self-review.md
+        - static/core/workflow.md
+        """
+        skill_dir = self._skill_dirs.get(name)
+        if not skill_dir:
+            return None
+        root = skill_dir.resolve()
+        target = (skill_dir / rel_path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        try:
+            return target.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def list_resources(self, name: str) -> list[str]:
+        """列出某个 skill 目录下的所有子文件（相对路径，正斜杠）。"""
+        skill_dir = self._skill_dirs.get(name)
+        if not skill_dir or not skill_dir.exists():
+            return []
+        return sorted(
+            str(p.relative_to(skill_dir)).replace("\\", "/")
+            for p in skill_dir.rglob("*")
+            if p.is_file()
+        )
+
+    def get_allowed_tools(self, name: str) -> list[str]:
+        """返回某 skill 声明的 allowed-tools（未声明则空列表）。"""
+        return self._allowed_tools.get(name, [])
 
     def list_skills(self) -> list[str]:
         """列出所有可用 Skill 名称。"""

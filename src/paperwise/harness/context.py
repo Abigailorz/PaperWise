@@ -181,7 +181,9 @@ class ContextManager:
         summary_lines = ["<archive_summary>"]
         summary_lines.append(f"  已完成 {len(self.archive)} 轮操作的最新摘要：")
         for e in self.archive[-3:]:
-            summary_lines.append(f"  [{e['step']}] {'; '.join(e['tools'][-3:])}")
+            step = e.get('step', '?')
+            tools = e.get('tools', [])
+            summary_lines.append(f"  [{step}] {'; '.join(tools[-3:])}")
         summary_lines.append("</archive_summary>")
         return '\n'.join(summary_lines)
 
@@ -253,7 +255,6 @@ class ContextManager:
         archive_note = self.archive_summarize(state)
         if archive_note:
             state.messages.append(Message(role=Role.USER, content=archive_note))
-            self.archive.append({"time": datetime.now().isoformat(), "removed": removed})
 
         after = len(state.messages)
         return before - after

@@ -30,6 +30,63 @@ STOPWORDS = {
     "this", "that", "new", "novel", "paper", "method", "model",
 }
 
+TOPIC_STOPWORDS = STOPWORDS | {
+    "using", "based", "towards", "toward", "novel", "method", "methods",
+    "approach", "framework", "paper", "model", "models", "learning",
+    "deep", "neural", "network", "networks", "training", "efficient",
+    "effective", "large", "proposed", "propose", "different", "various",
+    "several", "results", "show", "shows", "state", "art", "high", "low",
+    "without", "can", "use", "used", "one", "two", "three",
+}
+
+SCORE_GENERIC_TERMS = STOPWORDS | {
+    "language", "structure", "field", "motion", "model", "models",
+    "method", "methods", "approach", "framework", "system", "systems",
+    "data", "image", "images", "video", "text", "real", "time",
+    "learning", "deep", "neural", "network", "networks", "training",
+    "based", "using", "via", "toward", "towards", "efficient", "effective",
+    "large", "proposed", "different", "various", "several", "results",
+    "show", "shows", "state", "art", "high", "low", "without", "can",
+    "use", "used", "new", "novel", "paper", "one", "two", "three",
+    "recognition", "understanding", "prediction", "analysis", "survey",
+    "review", "generation", "representation", "detection", "classification",
+    "render", "rendering", "segmentation", "feature", "features",
+}
+
+
+def _topic_tokens(text: str) -> list[str]:
+    """Lowercase, keep alnum/hyphen tokens >=3 chars, drop stopwords/digits."""
+    out: list[str] = []
+    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", str(text or "").lower()):
+        if w in TOPIC_STOPWORDS or w.isdigit():
+            continue
+        out.append(w)
+    return out
+
+
+def extract_paper_topics(title: str = "", abstract: str = "",
+                         keywords: str = "") -> list[str]:
+    """Extract research topic phrases from a paper (keywords + title bigrams +
+    abstract terms). Used to infer user interests without manual input."""
+    topics: list[str] = []
+    for kw in re.split(r"[;,\n]", keywords or ""):
+        kw = kw.strip()
+        if 2 <= len(kw) <= 60:
+            topics.append(kw)
+
+    toks = _topic_tokens(title)
+    for a, b in zip(toks, toks[1:]):
+        topics.append(f"{a} {b}")
+    topics.extend(toks)
+
+    if abstract:
+        from collections import Counter
+        freq = Counter(_topic_tokens(abstract[:3000]))
+        for w, _ in freq.most_common(8):
+            topics.append(w)
+
+    return PaperRecommender._clean_topics(topics)
+
 
 def _clean(text: Optional[str]) -> str:
     """清理 XML 文本中的换行与空白。"""
@@ -51,45 +108,186 @@ class PaperRecommender:
 
     # ══════════ 研究方向提取 ══════════
 
+    # 研究方向相关的记忆 key 信号（用于从记忆自动推断，而非要求手动填写）
+    RESEARCH_KEY_HINTS = (
+        "研究方向", "研究领域", "研究兴趣", "研究课题",
+        "research_field", "research_fields", "research_interest", "research_topic",
+        "field", "domain", "interest", "topic",
+    )
+
     def get_research_topics(self, user_id: str = "default",
                             extra: list[str] = None) -> list[str]:
-        """从记忆卡 / 环境变量 / 显式参数提取研究方向。"""
+        """从记忆自动提取研究方向（优先结构化字段，其次关键词信号）。"""
         topics: list[str] = []
         if extra:
-            topics.extend(extra)
+            topics.extend(str(t).strip() for t in extra if str(t).strip())
 
+        # 环境变量仅作为兜底，不再要求用户手动填写
         env = os.environ.get("PAPERWISE_RESEARCH_FIELDS", "")
         if env:
             topics.extend(t.strip() for t in env.split(",") if t.strip())
 
         if self.memory:
-            for card in self.memory.query(limit=100):
-                if card.category in ("preference", "fact", "knowledge"):
-                    for value in card.data.values():
-                        s = str(value)
-                        # 支持 JSON 数组（如 ["3DGS", "Agent"]）与分隔符拼接
-                        if s.startswith("["):
-                            try:
-                                topics.extend(
-                                    str(t) for t in json.loads(s) if str(t).strip()
-                                )
-                                continue
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                        for piece in re.split(r"[、，,;；/]", s):
-                            piece = piece.strip()
-                            if 2 <= len(piece) <= 80:
-                                topics.append(piece)
+            for card in self.memory.query(limit=200):
+                if card.category not in ("preference", "fact", "knowledge", "experience"):
+                    continue
+                for key, value in card.data.items():
+                    low_key = str(key).lower()
+                    if low_key in ("research_fields", "research_field",
+                                   "research_interest", "research_topic") \
+                            or any(h in low_key for h in self.RESEARCH_KEY_HINTS):
+                        topics.extend(self._split_topics(value))
+        return self._clean_topics(topics)
 
+    @staticmethod
+    def _split_topics(s) -> list[str]:
+        """把单个值拆成若干方向（支持 JSON 数组与常见分隔符）。"""
+        s = str(s or "").strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                items = json.loads(s)
+                if isinstance(items, list):
+                    return [str(t).strip() for t in items if str(t).strip()]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [p.strip() for p in re.split(r"[、，,;；/|\n]", s) if p.strip()]
+
+    @staticmethod
+    def _clean_topics(topics) -> list[str]:
+        """去重、去噪、去掉“研究方向是/为”等前缀。"""
         seen: set[str] = set()
+        stop = {"研究", "方向", "领域", "research", "field", "interest", "topic"}
         result: list[str] = []
         for t in topics:
-            t = t.strip()
+            t = re.sub(
+                r"^(?:我的)?(?:研究(?:方向|领域|兴趣)|research (?:direction|field|interest))?"
+                r"(?:是|为|:：)?\s*", "", str(t).strip(), flags=re.I,
+            )
+            t = t.strip(" ：:，,、")
             low = t.lower()
-            if t and low not in seen:
-                seen.add(low)
-                result.append(t)
+            if not t or len(t) < 2 or len(t) > 80 or low in seen or low in stop:
+                continue
+            seen.add(low)
+            result.append(t)
         return result[:10]
+
+    @staticmethod
+    def _card_timestamp(card) -> float:
+        """Safely parse a MemoryCard timestamp into a unix timestamp."""
+        try:
+            return datetime.fromisoformat(card.timestamp).timestamp()
+        except (ValueError, TypeError):
+            return 0.0
+
+    def build_interest_profile(self, user_id: str = "default",
+                               limit: int = 12) -> list[dict]:
+        """Aggregate weighted research-interest signals from memory.
+
+        Sources and weights:
+        - declared     (preference research_fields): 1.0
+        - paper        (knowledge cards tagged paper/interest_signal): 0.8
+        - conversation (fact/experience research hints): 0.55
+
+        Paper/conversation signals decay with a 30-day half-life so recent
+        activity dominates. No manual research-direction input is required.
+        """
+        now = time.time()
+        acc: dict[str, dict] = {}
+
+        def add(topic, weight, source, confidence, ts):
+            topic = str(topic or "").strip()
+            if not topic or len(topic) < 2:
+                return
+            key = topic.lower()
+            e = acc.setdefault(key, {
+                "topic": topic, "weight": 0.0, "confidence": 0.0,
+                "sources": set(), "count": 0, "last_seen": 0.0,
+            })
+            age_days = max(0.0, (now - ts) / 86400) if ts else 0.0
+            decay = 0.5 ** (age_days / 30.0)
+            e["weight"] += weight * decay
+            e["confidence"] = max(e["confidence"], float(confidence or 0.0))
+            e["sources"].add(source)
+            e["count"] += 1
+            e["last_seen"] = max(e["last_seen"], ts or 0.0)
+
+        # Environment fallback (server-side config, not user manual input).
+        for t in self._split_topics(os.environ.get("PAPERWISE_RESEARCH_FIELDS", "")):
+            add(t, 1.0, "declared", 0.9, now)
+
+        if not self.memory:
+            return []
+
+        for card in self.memory.query(limit=300):
+            ts = self._card_timestamp(card)
+            cat = card.category
+            tags = set(card.tags or [])
+            data = card.data or {}
+
+            # Paper interest signals.
+            if (cat == "knowledge"
+                    and ("paper" in tags or "interest_signal" in tags
+                         or "topics" in data or "keywords" in data)):
+                for key in ("topics", "keywords"):
+                    for t in self._split_topics(data.get(key, "")):
+                        add(t, 0.8, "paper", card.confidence, ts)
+                continue
+
+            # Declared + conversation research fields.
+            for key, value in data.items():
+                low = str(key).lower()
+                if not (low in ("research_fields", "research_field",
+                                "research_interest", "research_topic")
+                        or any(h in low for h in self.RESEARCH_KEY_HINTS)):
+                    continue
+                source = "declared" if cat == "preference" else "conversation"
+                weight = 1.0 if source == "declared" else 0.55
+                for t in self._split_topics(value):
+                    add(t, weight, source, card.confidence, ts)
+
+        ranked = sorted(
+            acc.values(),
+            key=lambda x: (x["weight"], x["count"], x["last_seen"]),
+            reverse=True,
+        )
+        max_w = max((x["weight"] for x in ranked), default=1.0) or 1.0
+        out: list[dict] = []
+        for e in ranked[:limit]:
+            out.append({
+                "topic": e["topic"],
+                "weight": round(e["weight"] / max_w, 3),
+                "confidence": round(e["confidence"], 2),
+                "sources": sorted(e["sources"]),
+                "count": e["count"],
+                "last_seen": (
+                    datetime.fromtimestamp(e["last_seen"]).isoformat()
+                    if e["last_seen"] else ""
+                ),
+            })
+        return out
+
+    def remember_paper(self, title: str = "", abstract: str = "",
+                       keywords: str = "", arxiv_id: str = "") -> list[str]:
+        """Store a paper's topics into memory as an interest signal."""
+        topics = extract_paper_topics(title, abstract, keywords)
+        if not topics:
+            return []
+        if self.memory:
+            try:
+                self.memory.remember(
+                    category="knowledge",
+                    data={
+                        "title": title or "",
+                        "arxiv_id": arxiv_id or "",
+                        "topics": json.dumps(topics, ensure_ascii=False),
+                    },
+                    backstory=f"用户解读了论文《{title}》，用于自动学习研究兴趣",
+                    confidence=0.7,
+                    tags=["paper", "interest_signal"],
+                )
+            except Exception:
+                pass
+        return topics
 
     # ══════════ arXiv 检索 ══════════
 
@@ -282,7 +480,11 @@ class PaperRecommender:
     # ══════════ 相关性评分 ══════════
 
     def score_paper(self, paper: dict, topics: list[str]) -> dict:
-        """相关性评分：整词命中权重高于部分 token 命中，标题权重高于摘要。"""
+        """相关性评分：整词/短语命中权重高于部分 token 命中，标题权重高于摘要。
+
+        部分 token 匹配只对「具体词」生效，且要求多数 token 命中，避免
+        language / structure 这类泛化词造成跨领域误推。
+        """
         haystack = f"{paper.get('title', '')} {paper.get('summary', '')}".lower()
         title = paper.get("title", "").lower()
         matched = []
@@ -291,19 +493,30 @@ class PaperRecommender:
             tl = topic.lower().strip()
             if not tl:
                 continue
-            if tl in haystack:
-                matched.append(topic)
-                score += 0.6 if tl in title else 0.35
+
+            # 整词/整短语命中（权重最高）；单 token 用词边界，避免 "sam" 命中 "sample"
+            if " " in tl:
+                whole_hit = tl in haystack
+                title_hit = tl in title
             else:
-                # 部分匹配：方向中的关键词 token 命中（如 "Splatting"）
+                whole_hit = re.search(rf"\b{re.escape(tl)}\b", haystack) is not None
+                title_hit = re.search(rf"\b{re.escape(tl)}\b", title) is not None
+
+            if whole_hit:
+                matched.append(topic)
+                score += 0.6 if title_hit else 0.35
+            else:
                 tokens = [
                     w for w in re.split(r"[^a-z0-9]+", tl)
-                    if len(w) >= 3 and w not in STOPWORDS
+                    if len(w) >= 4 and w not in SCORE_GENERIC_TERMS
                 ]
+                if not tokens:
+                    continue
                 hits = [w for w in tokens if w in haystack]
-                if hits:
+                ratio = len(hits) / len(tokens)
+                if hits and ratio >= 0.5:
                     matched.append(topic)
-                    score += 0.25 if any(w in title for w in hits) else 0.15
+                    score += (0.25 if any(w in title for w in hits) else 0.15) * ratio
         score = min(round(score, 2), 1.0)
         return {
             "score": score,
@@ -318,13 +531,23 @@ class PaperRecommender:
                         days: int = 7, max_results: int = 30,
                         use_cache: bool = True) -> dict:
         """返回按相关性排序的推荐论文。"""
-        topics = self.get_research_topics(user_id, topics)
+        profile = self.build_interest_profile(user_id)
+        extra = self._clean_topics(topics or [])
+        topics = [p["topic"] for p in profile]
+        seen = {t.lower() for t in topics}
+        for t in extra:
+            if t.lower() not in seen:
+                topics.append(t)
+                seen.add(t.lower())
+        profile_key = "|".join(sorted({t.lower() for t in topics}))
 
         cache = self._load_cache(user_id)
         if (use_cache and cache and cache.get("papers")
+                and cache.get("profile_key") == profile_key
                 and time.time() - cache.get("ts", 0) < self.CACHE_TTL_SECONDS):
             return {
                 "topics": topics,
+                "profile": profile,
                 "papers": cache.get("papers", [])[:limit],
                 "cached": True,
                 "ts": cache.get("ts"),
@@ -332,7 +555,8 @@ class PaperRecommender:
 
         if not topics:
             return {
-                "topics": [], "papers": [], "cached": False,
+                "topics": [], "profile": profile,
+                "papers": [], "cached": False,
                 "reason": "no_topics",
             }
 
@@ -340,7 +564,8 @@ class PaperRecommender:
             papers = await self.fetch_recent_papers(topics, max_results=max_results, days=days)
         except Exception as e:
             logging.getLogger("paperwise").warning(f"arXiv fetch failed: {e}")
-            return {"topics": topics, "papers": [], "cached": False,
+            return {"topics": topics, "profile": profile,
+                    "papers": [], "cached": False,
                     "reason": f"fetch_error: {type(e).__name__}"}
 
         scored = []
@@ -352,9 +577,13 @@ class PaperRecommender:
         scored.sort(key=lambda x: x["score"], reverse=True)
 
         if scored:
-            self._save_cache(user_id, {"ts": time.time(), "papers": scored})
+            self._save_cache(user_id, {
+                "ts": time.time(), "papers": scored,
+                "profile_key": profile_key,
+            })
         return {
             "topics": topics,
+            "profile": profile,
             "papers": scored[:limit],
             "cached": False,
             "ts": time.time(),

@@ -158,9 +158,10 @@ class SkillLoadTool(BaseTool):
     调用后 Agent 应在当前对话中遵循 Skill 的指令。
     """
 
-    def __init__(self, workspace: Path, skill_loader=None):
+    def __init__(self, workspace: Path, skill_loader=None, tool_registry=None):
         super().__init__(workspace)
         self._loader = skill_loader
+        self._registry = tool_registry
         self._loaded_skills: set[str] = set()
 
     @property
@@ -207,6 +208,13 @@ class SkillLoadTool(BaseTool):
 
         self._loaded_skills.add(name)
 
+        # 工具绑定：若 skill 声明了 allowed-tools，则只暴露这些 + 核心工具
+        if self._registry is not None and self._loader is not None:
+            allowed = self._loader.get_allowed_tools(name)
+            if allowed:
+                core = {"skill_list", "skill_load", "load_skill_resource", "read_file"}
+                self._registry.activate_only(core | set(allowed))
+
         # 返回完整 Skill 内容，带加载确认头
         # Agent 会阅读并遵循其中的工作流程
         return (
@@ -219,4 +227,61 @@ class SkillLoadTool(BaseTool):
             f"---\n"
             f"Skill '{name}' loaded. You are now expected to follow the above workflow.\n"
             f"Loaded skills this session: {', '.join(sorted(self._loaded_skills))}"
+        )
+
+
+class SkillResourceTool(BaseTool):
+    """按需加载 Skill 目录内的子文件（渐进式披露的第三层）。
+
+    skill_load 只返回 SKILL.md 主流程；当 SKILL.md 里要求读取
+    manifest.yaml / references/*.md / static/core/*.md 等子文件时，
+    用本工具按相对路径加载，避免靠 read_file 猜路径。
+    """
+
+    def __init__(self, workspace: Path, skill_loader=None):
+        super().__init__(workspace)
+        self._loader = skill_loader
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="load_skill_resource",
+            description=(
+                "加载指定 Skill 目录内的子文件内容。\n"
+                "当 skill_load 返回的 SKILL.md 要求读取某个子文件（如 manifest.yaml、"
+                "references/xxx.md、static/core/xxx.md）时使用。\n"
+                "resource 是相对于该 Skill 目录的相对路径。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "skill": {"type": "string", "description": "Skill 名称"},
+                    "resource": {
+                        "type": "string",
+                        "description": "相对于 Skill 目录的路径，如 references/self-review.md",
+                    },
+                },
+                "required": ["skill", "resource"],
+            },
+            risk=ToolRisk.LOW,
+        )
+
+    async def execute(self, skill: str, resource: str) -> str:
+        if not self._loader:
+            return "[Error] Skill loader not available."
+
+        content = self._loader.load_resource(skill, resource)
+        if content is None:
+            available = self._loader.list_resources(skill)
+            head = f"[Error] Resource '{resource}' not found in skill '{skill}'."
+            if available:
+                head += "\nAvailable resources:\n" + "\n".join(
+                    f"  - {r}" for r in available
+                )
+            return head
+
+        return (
+            f"# Skill Resource: {skill}/{resource}\n"
+            f"# ═══════════════════════════════════════\n\n"
+            f"{content}"
         )

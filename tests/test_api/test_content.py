@@ -66,8 +66,15 @@ def test_arxiv_endpoint_rejects_invalid_url(client):
     assert r.status_code == 400
 
 
-def test_research_topics_and_recommend(client, tmp_path, monkeypatch):
+def test_interests_and_recommend(client, tmp_path, monkeypatch):
+    import paperwise.config.settings as settings_mod
+    from paperwise.memory.user_memory import UserMemory
     from paperwise.recommender import PaperRecommender
+
+    ws = settings_mod.get_settings().workspace_dir
+    mem = UserMemory(ws / ".paperwise" / "default" / "memory")
+    mem.remember("preference", {"research_fields": "3D Gaussian Splatting"},
+                 confidence=0.95)
 
     async def fake_fetch(self, topics, max_results=30, days=7):
         return [{
@@ -80,10 +87,12 @@ def test_research_topics_and_recommend(client, tmp_path, monkeypatch):
 
     monkeypatch.setattr(PaperRecommender, "fetch_recent_papers", fake_fetch)
 
-    r = client.post("/api/profile/research", json={"topics": ["3D Gaussian Splatting"]})
-    assert r.json()["saved"] is True
+    # 兴趣画像接口：无需手动填写研究方向
+    r = client.get("/api/interests")
+    profile = r.json()["profile"]
+    assert any(p["topic"] == "3D Gaussian Splatting" for p in profile)
 
     r = client.get("/api/recommend?limit=5")
     d = r.json()
-    assert d["topics"] == ["3D Gaussian Splatting"]
+    assert "3D Gaussian Splatting" in d["topics"]
     assert d["papers"] and d["papers"][0]["arxiv_id"] == "2401.00001"

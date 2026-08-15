@@ -42,6 +42,15 @@ class ToolRegistry:
         self._tools.pop(name, None)
         self._active_tools.discard(name)
 
+    def activate_only(self, names: list[str]) -> None:
+        """只把指定工具暴露给 LLM；其余保留实例但不再进入 tools 定义。"""
+        valid = set(names) & set(self._tools.keys())
+        self._active_tools = valid
+
+    def activate_all(self) -> None:
+        """重新暴露所有已注册工具。"""
+        self._active_tools = set(self._tools.keys())
+
     # === 查找 ===
 
     def get(self, name: str) -> BaseTool:
@@ -108,7 +117,7 @@ class ToolRegistry:
 
     def set_skill_loader(self, loader) -> None:
         """将 SkillLoader 注入到 SkillListTool 和 SkillLoadTool 中。"""
-        for name in ("skill_list", "skill_load"):
+        for name in ("skill_list", "skill_load", "load_skill_resource"):
             tool = self._tools.get(name)
             if tool and hasattr(tool, "_loader"):
                 tool._loader = loader
@@ -129,8 +138,11 @@ class ToolRegistry:
         from paperwise.tools.file_tools import ReadFileTool, WriteFileTool, EditFileTool
         from paperwise.tools.search_tools import GlobTool, GrepTool
         from paperwise.tools.exec_tools import CodeInterpreterTool, BashTool
+        from paperwise.tools.generation_tools import GeneratePPTXTool
         from paperwise.tools.access_tool import RequestFileAccessTool
-        from paperwise.tools.skill_tools import SkillListTool, SkillLoadTool, DiscoverTool
+        from paperwise.tools.skill_tools import (
+            SkillListTool, SkillLoadTool, SkillResourceTool, DiscoverTool,
+        )
         from paperwise.tools.collab_tools import (
             SpawnSubAgentTool, SendMessageTool, SetTimerTool,
             MonitorShellTool, AskUserTool, NotifyUserTool,
@@ -145,11 +157,14 @@ class ToolRegistry:
         registry.register_all([
             WriteFileTool(workspace), EditFileTool(workspace),
             CodeInterpreterTool(workspace), BashTool(workspace),
+            GeneratePPTXTool(workspace),
         ])
         # Skill 工具（渐进式披露）
         # skill_loader 由 AgentSession/Agent 后续注入
         registry.register_all([
-            SkillListTool(workspace), SkillLoadTool(workspace),
+            SkillListTool(workspace),
+            SkillLoadTool(workspace, tool_registry=registry),
+            SkillResourceTool(workspace),
         ])
         # 动态工具发现（需要 registry 引用以枚举全部工具）
         registry.register(DiscoverTool(workspace, tool_registry=registry))

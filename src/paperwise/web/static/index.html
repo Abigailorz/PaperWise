@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PaperWise — AI 学术论文研究助手</title>
 <link rel="icon" href="/static/assets/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400..700,0..1,0&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
 <div class="app">
-  <!-- 侧边栏 -->
   <aside class="sidebar">
     <div class="sidebar-header">
       <img class="logo" src="/static/assets/logo.svg" alt="logo">
@@ -24,11 +26,12 @@
       </div>
     </div>
     <div class="sidebar-footer">
-      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="newSession()">＋ 新建对话</button>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="newSession()">
+        <span class="material-symbols-outlined">add</span> 新建对话
+      </button>
     </div>
   </aside>
 
-  <!-- 主聊天区 -->
   <div class="main">
     <div class="chat-header">
       <span class="dot off" id="connDot"></span>
@@ -36,11 +39,11 @@
       <span class="paper-label" id="paperLabel"></span>
       <span class="spacer"></span>
       <div class="actions">
-        <button class="btn btn-sm" onclick="toggleRecommendPanel()">🔥 推荐</button>
-        <button class="btn btn-sm" onclick="toggleMemory()">🧠 记忆</button>
-        <button class="btn btn-sm" onclick="toggleEditor()">✏️ 编辑</button>
-        <button class="btn btn-sm" onclick="toggleReport()">📝 报告</button>
-        <button class="btn btn-sm btn-primary" onclick="generatePPTX()">📊 生成 PPT</button>
+        <button class="btn btn-sm" onclick="toggleRecommendPanel()"><span class="material-symbols-outlined">auto_awesome</span>推荐</button>
+        <button class="btn btn-sm" onclick="toggleMemory()"><span class="material-symbols-outlined">psychology</span>记忆</button>
+        <button class="btn btn-sm" onclick="toggleEditor()"><span class="material-symbols-outlined">edit_note</span>编辑</button>
+        <button class="btn btn-sm" onclick="toggleReport()"><span class="material-symbols-outlined">description</span>报告</button>
+        <button class="btn btn-sm btn-primary" onclick="generatePPTX()" title="用 nature-paper2ppt 技能生成学术汇报 PPT"><span class="material-symbols-outlined">slideshow</span>生成 PPT</button>
       </div>
     </div>
 
@@ -49,65 +52,60 @@
     <div class="chat-input">
       <div class="input-box">
         <div class="input-tools">
-          <label class="icon-btn" title="上传论文 PDF" for="fileUpload2">📎</label>
+          <label class="icon-btn" title="上传论文 PDF" for="fileUpload2">
+            <span class="material-symbols-outlined">attach_file</span>
+          </label>
           <input type="file" id="fileUpload2" accept=".pdf" hidden onchange="handleFile(this)">
         </div>
         <textarea id="msgInput" rows="1" placeholder="输入消息，或上传论文 PDF 开始..."
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-        <button class="btn btn-primary" onclick="sendMessage()" id="sendBtn">发送</button>
+        <button class="btn btn-primary send-btn" onclick="sendMessage()" id="sendBtn">
+          <span class="material-symbols-outlined">send</span>
+        </button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 面板遮罩 -->
 <div class="panel-overlay" id="panelOverlay" onclick="closeOtherPanels(null)"></div>
 
-<!-- 推荐面板 -->
 <div class="panel" id="recommendPanel">
   <div class="panel-head">
-    <h3>🔥 主动论文推荐</h3>
-    <button class="icon-btn" onclick="hideRecommendPanel()">✕</button>
+    <h3>主动论文推荐</h3>
+    <button class="btn btn-sm" onclick="refreshRecommendations()"><span class="material-symbols-outlined">refresh</span> 刷新</button>
+    <button class="icon-btn" onclick="hideRecommendPanel()"><span class="material-symbols-outlined">close</span></button>
   </div>
   <div class="panel-body">
-    <div style="margin-bottom:14px;display:flex;gap:8px">
-      <input id="researchTopics" placeholder="研究方向（逗号分隔），如：3DGS, Agent"
-             style="flex:1;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);outline:none;font-size:12.5px">
-      <button class="btn btn-primary btn-sm" onclick="setResearchTopics()">保存</button>
-    </div>
+    <div id="recoTopics"></div>
     <div id="recommendBody"></div>
   </div>
 </div>
 
-<!-- 报告面板 -->
 <div class="panel" id="reportPanel">
   <div class="panel-head">
-    <h3>📝 报告内容</h3>
-    <button class="icon-btn" onclick="toggleReport()">✕</button>
+    <h3>报告内容</h3>
+    <button class="icon-btn" onclick="toggleReport()"><span class="material-symbols-outlined">close</span></button>
   </div>
   <div class="panel-body" id="reportContent"></div>
 </div>
 
-<!-- 记忆面板 -->
 <div class="panel" id="memoryPanel">
   <div class="panel-head">
-    <h3>🧠 用户记忆</h3>
+    <h3>用户记忆</h3>
     <button class="btn btn-sm" onclick="refreshMemory()">刷新</button>
-    <button class="icon-btn" onclick="toggleMemory()">✕</button>
+    <button class="icon-btn" onclick="toggleMemory()"><span class="material-symbols-outlined">close</span></button>
   </div>
   <div class="panel-body" id="memoryList"></div>
 </div>
 
-<!-- 章节编辑面板 -->
 <div class="panel" id="editorPanel">
   <div class="panel-head">
-    <h3>✏️ 章节编辑</h3>
-    <button class="icon-btn" onclick="toggleEditor()">✕</button>
+    <h3>章节编辑</h3>
+    <button class="icon-btn" onclick="toggleEditor()"><span class="material-symbols-outlined">close</span></button>
   </div>
   <div class="panel-body">
-    <select id="sectionSelect" onchange="selectSection()"
-            style="width:100%;margin-bottom:10px;padding:8px;background:var(--bg-soft);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px"></select>
-    <textarea id="sectionText" style="width:100%;height:300px;background:var(--bg-soft);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;font-family:Consolas,monospace;outline:none"></textarea>
+    <select id="sectionSelect" onchange="selectSection()"></select>
+    <textarea id="sectionText"></textarea>
     <div class="editor-tools">
       <button class="btn" style="flex:1" onclick="saveSection(false)">保存</button>
       <button class="btn btn-primary" style="flex:1" onclick="saveSection(true)">保存并生成 PPT</button>

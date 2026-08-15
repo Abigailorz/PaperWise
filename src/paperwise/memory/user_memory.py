@@ -109,9 +109,11 @@ class UserMemory:
 1. 只提取对未来对话有用的持久信息
 2. 不要提取临时的、单次性的请求
 3. 每一条记忆都需要有明确的证据支持
+4. 如果用户在对话中明确提到了自己的研究方向、研究领域或研究兴趣，务必把它们填入 research_fields
 
-返回 JSON 格式：
+返回 JSON 格式（research_fields 可为空数组）：
 {{
+  "research_fields": ["方向1", "方向2"],
   "memories": [
     {{
       "category": "preference|fact|relationship|experience|knowledge",
@@ -129,7 +131,7 @@ class UserMemory:
 - experience: 交互经验（"上次帮我分析过Transformer论文"）
 - knowledge: 分析的论文信息
 
-如果没有值得长期记住的信息，返回空列表。"""
+如果没有值得长期记住的信息，memories 返回空列表。"""
         try:
             resp = await llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
@@ -137,6 +139,30 @@ class UserMemory:
             )
             result = json.loads(resp.content)
             saved = []
+
+            # 研究方向单独沉淀为结构化的 preference 卡，供推荐器读取
+            import re as _re
+            fields = result.get("research_fields") or []
+            fields = [str(f).strip() for f in fields if str(f).strip()]
+            if not fields:
+                m = _re.search(
+                    r"(?:研究方向|研究领域|研究兴趣)\s*(?:是|为|:：)\s*([^\n。，,;]+)",
+                    user_msg,
+                )
+                if m:
+                    fields = [
+                        p.strip() for p in _re.split(r"[、，,;；/]", m.group(1))
+                        if p.strip()
+                    ]
+            if fields:
+                self.remember(
+                    category="preference",
+                    data={"research_fields": json.dumps(fields, ensure_ascii=False)},
+                    backstory="从对话中提取的研究方向",
+                    confidence=0.85,
+                    tags=["research", "llm_extracted"],
+                )
+
             for m in result.get("memories", []):
                 card = self.remember(
                     category=m.get("category", "fact"),
@@ -342,11 +368,16 @@ class UserMemory:
     # ══════════ 内部 ══════════
 
     def _find_similar(self, category: str, data: dict) -> Optional[MemoryCard]:
-        """查找同类别下是否有重叠 key 的记忆（用于去重合并）"""
-        keys = set(data.keys())
+        """查找同类别下「同名且同值」key 的记忆（用于去重合并）。
+
+        只在同名 key 的值也相同时才合并，避免把「不同论文的 topics/title」
+        这类共享 key 名但值不同的卡片误合并。
+        """
         for card in self.cards.values():
-            if card.category == category:
-                if keys & set(card.data.keys()):
+            if card.category != category:
+                continue
+            for key, value in data.items():
+                if key in card.data and card.data.get(key) == value:
                     return card
         return None
 

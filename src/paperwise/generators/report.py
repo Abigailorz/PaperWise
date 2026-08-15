@@ -3,6 +3,7 @@
 对应书中 5.2.3 节：代码驱动的多媒体生成
 """
 
+import json
 from pathlib import Path
 
 from paperwise.core.types import ParsedPaper
@@ -84,8 +85,9 @@ The parsed paper content is available in these files:
 
 1. FIRST, read the paper metadata and full text to understand the paper
 2. Read figures/ and tables/ to understand the visual content
-3. For EACH section below, write detailed analysis to report/sections/{{name}}.md
-4. After ALL sections are written, assemble report/report.md with frontmatter and table of contents
+3. Write a skeleton report/report.md NOW (YAML frontmatter + table of contents) so the report file always exists
+4. For EACH section below, write detailed analysis to report/sections/{{name}}.md
+5. Finally, re-assemble report/report.md by inlining all completed sections in order
 
 ## Report Sections to Generate
 
@@ -141,10 +143,10 @@ For each section, provide thorough analysis with specific evidence from the pape
 
 ## Final Assembly
 
-After all sections are written, create report/report.md that:
-- Has YAML frontmatter (title, authors, date, paper_id)
-- Has a Table of Contents linking to each section
-- Includes all sections in order
+Re-assemble report/report.md (already created as a skeleton in step 3) so that it:
+- Keeps the YAML frontmatter (title, authors, date, paper_id)
+- Keeps the Table of Contents linking to each section
+- Inlines all completed sections in order
 - Is professionally formatted
 
 ## Important Reminders
@@ -153,3 +155,45 @@ After all sections are written, create report/report.md that:
 - Reference tables by number with key data points
 - Be honest in critical analysis — don't just praise
 - The report should be useful to someone who hasn't read the paper"""
+
+    def assemble(self, paper_dir: str | Path) -> Path:
+        """确定性组装 report/sections/*.md 为 report/report.md。
+
+        作为兜底：即使 Agent 在步骤预算内没来得及手动组装，也能保证
+        report.md 一定存在且内容完整。
+        """
+        paper_dir = Path(paper_dir)
+        sections_dir = paper_dir / "report" / "sections"
+        report_path = paper_dir / "report" / "report.md"
+        if not sections_dir.exists():
+            return report_path
+
+        sections = sorted(sections_dir.glob("*.md"))
+        if not sections:
+            return report_path
+
+        title = paper_dir.name
+        meta_path = paper_dir / "metadata.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                title = meta.get("title", title)
+            except Exception:
+                pass
+
+        toc, body = [], []
+        for i, sp in enumerate(sections, 1):
+            name = sp.stem
+            content = sp.read_text(encoding="utf-8", errors="replace").strip()
+            toc.append(f"{i}. {name}")
+            body.append(f"## {name}\n\n{content}")
+
+        report = (
+            f"---\ntitle: {title}\n---\n\n"
+            f"# {title}\n\n"
+            f"## Table of Contents\n\n" + "\n".join(toc) + "\n\n"
+            + "\n\n".join(body) + "\n"
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report, encoding="utf-8")
+        return report_path

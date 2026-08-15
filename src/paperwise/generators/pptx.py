@@ -1,75 +1,97 @@
-"""PPT 生成器 — 基于 python-pptx 生成学术汇报演示文稿
+"""PPT 生成器 — 基于 python-pptx 生成学术汇报演示文稿（v2 重写）
 
-对应书中 5.2.3 节：代码驱动的多媒体生成
-PPT 本质上是通过代码生成 OOXML 格式的文档
+v2 相比旧版修复的问题：
+- 章节内容正确映射，空章节自动跳过，不再生成 "(No content available)" 空页
+- 自动嵌入论文解析出的图片（figures/）与表格（tables/）
+- 更稳健的要点提取：去除 Markdown/引用噪声、按句切分、控制长度、去重
+- 文本自适应字号，避免溢出
+- 统一中英文字体与更现代的学术配色
 """
 
 from pathlib import Path
 from typing import Optional
 
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
+from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover
+    Image = None
 
 
 class PPTXGenerator:
-    """学术论文演示文稿生成器。
+    """学术论文演示文稿生成器。"""
 
-    标准幻灯片结构（10-15 页）:
-    1.  Title Slide       — 论文标题、作者、会议
-    2.  Overview          — 论文概要（1 页）
-    3.  Background        — 研究背景与动机（1-2 页）
-    4.  Problem Statement — 研究问题（1 页）
-    5.  Core Method       — 核心方法（2-3 页，含公式）
-    6.  Experiments       — 实验设计与结果（2-3 页，含图表）
-    7.  Critical Analysis — 优势与局限（1 页）
-    8.  Conclusion        — 总结与展望（1 页）
-    9.  Thank You         — 致谢/Q&A
-
-    使用 python-pptx 直接生成，输出标准 PowerPoint 可打开文件。
-    """
-
-    # 配色方案（学术风格）
     COLORS = {
-        "primary": RGBColor(0x1A, 0x56, 0xDB),     # 深蓝
-        "secondary": RGBColor(0x2D, 0x3A, 0x4A),   # 深灰
-        "accent": RGBColor(0xE8, 0x6A, 0x17),      # 橙色强调
-        "bg_light": RGBColor(0xF5, 0xF7, 0xFA),    # 浅灰背景
+        "primary": RGBColor(0x0F, 0x2A, 0x5C),
+        "primary_2": RGBColor(0x1E, 0x4E, 0xB8),
+        "accent": RGBColor(0x3B, 0x82, 0xF6),
+        "accent_soft": RGBColor(0xDB, 0xE8, 0xFE),
+        "orange": RGBColor(0xF5, 0x9E, 0x0B),
+        "dark": RGBColor(0x1F, 0x29, 0x37),
+        "gray": RGBColor(0x6B, 0x72, 0x80),
+        "light": RGBColor(0xF3, 0xF6, 0xFB),
         "white": RGBColor(0xFF, 0xFF, 0xFF),
-        "black": RGBColor(0x1A, 0x1A, 0x1A),
-        "gray": RGBColor(0x6B, 0x7B, 0x8D),
-        "green": RGBColor(0x27, 0xAE, 0x60),
-        "red": RGBColor(0xE7, 0x4C, 0x3C),
+        "green": RGBColor(0x10, 0x98, 0x5A),
+        "red": RGBColor(0xD9, 0x43, 0x52),
     }
 
-    FONT_TITLE = "Arial"
-    FONT_BODY = "Arial"
+    FONT_TITLE = "Microsoft YaHei"
+    FONT_BODY = "Microsoft YaHei"
+
+    SECTION_ORDER = [
+        ("overview", "论文概览"),
+        ("motivation", "研究动机与问题"),
+        ("methodology", "核心方法"),
+        ("experiments", "实验与结果"),
+        ("critical_analysis", "批判性分析"),
+        ("related_work", "相关工作"),
+        ("conclusion", "总结与展望"),
+    ]
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace)
         self.prs = Presentation()
-        self.prs.slide_width = Inches(13.333)  # 16:9 宽屏
+        self.prs.slide_width = Inches(13.333)  # 16:9
         self.prs.slide_height = Inches(7.5)
 
-    def generate(self, paper_data: dict, output_path: str = None) -> str:
-        """生成完整 PPT。
+    # ============ 主入口 ============
 
-        Args:
-            paper_data: {title, authors, venue, sections: {overview, motivation, ...}}
-            output_path: 输出 PPTX 文件路径
+    def generate(self, paper_data: dict, output_path: Optional[str] = None) -> str:
+        sections = dict(paper_data.get("sections") or {})
+        for key, _ in self.SECTION_ORDER:
+            if key in paper_data and key not in sections:
+                sections[key] = paper_data[key]
 
-        Returns:
-            输出文件路径
-        """
-        self._add_title_slide(paper_data)
-        self._add_overview_slide(paper_data)
-        self._add_section_slide("Background & Motivation", paper_data.get("motivation", ""), 2)
-        self._add_section_slide("Problem Statement", paper_data.get("problem", ""), 1)
-        self._add_section_slide("Core Methodology", paper_data.get("methodology", ""), 3)
-        self._add_section_slide("Experimental Results", paper_data.get("experiments", ""), 3)
-        self._add_critical_analysis_slide(paper_data)
-        self._add_conclusion_slide(paper_data)
+        title = paper_data.get("title") or self.workspace.name
+        authors = paper_data.get("authors") or paper_data.get("author") or ""
+        venue = paper_data.get("venue") or paper_data.get("subject") or ""
+        year = paper_data.get("year") or ""
+
+        figures = list(paper_data.get("figures") or self._discover_figures())
+        tables = list(paper_data.get("tables") or self._discover_tables())
+
+        self._add_title_slide(title, authors, venue, year)
+
+        for key, section_title in self.SECTION_ORDER:
+            content = (sections.get(key) or "").strip()
+            if not content:
+                continue
+            if key == "critical_analysis":
+                self._add_critical_slide(content)
+            else:
+                self._add_section_slides(section_title, content)
+
+        for fig in figures[:4]:
+            self._add_figure_slide(fig)
+
+        if tables:
+            self._add_table_slide(tables[0])
+
         self._add_thank_you_slide()
 
         output = output_path or str(self.workspace / "presentation" / "slides.pptx")
@@ -77,259 +99,362 @@ class PPTXGenerator:
         self.prs.save(output)
         return output
 
-    # === 幻灯片构建方法 ===
+    # ============ 幻灯片构建 ============
 
-    def _add_title_slide(self, data: dict):
-        """标题页"""
-        slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])  # Blank
+    def _add_title_slide(self, title, authors, venue, year):
+        slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])
         self._set_bg(slide, self.COLORS["primary"])
 
-        # 标题
-        title_box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11.3), Inches(2))
-        tf = title_box.text_frame
+        bar = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), self.prs.slide_width, Inches(0.12)
+        )
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = self.COLORS["orange"]
+        bar.line.fill.background()
+
+        box = slide.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(11.5), Inches(2.6))
+        tf = box.text_frame
         tf.word_wrap = True
         p = tf.paragraphs[0]
-        p.text = data.get("title", "Paper Title")
-        p.font.size = Pt(40)
+        p.text = title
+        p.font.size = Pt(38)
         p.font.bold = True
         p.font.color.rgb = self.COLORS["white"]
         p.font.name = self.FONT_TITLE
         p.alignment = PP_ALIGN.LEFT
 
-        # 作者
-        author_box = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(11.3), Inches(1))
-        tf = author_box.text_frame
-        p = tf.paragraphs[0]
-        p.text = data.get("authors", "")
-        p.font.size = Pt(20)
-        p.font.color.rgb = RGBColor(0xBB, 0xCC, 0xEE)
-        p.font.name = self.FONT_BODY
-
-        # 日期
-        venue_box = slide.shapes.add_textbox(Inches(1), Inches(5.3), Inches(11.3), Inches(0.5))
-        tf = venue_box.text_frame
-        p = tf.paragraphs[0]
-        p.text = data.get("venue", "") + (f" ({data.get('year', '')})" if data.get("year") else "")
-        p.font.size = Pt(16)
-        p.font.color.rgb = RGBColor(0x99, 0xAA, 0xCC)
-        p.font.name = self.FONT_BODY
-
-        # 底部标记
-        self._add_footer(slide, "PaperWise — AI-Generated Presentation")
-
-    def _add_overview_slide(self, data: dict):
-        """论文概要页"""
-        slide = self._create_content_slide("Paper Overview")
-
-        content = data.get("overview", data.get("sections", {}).get("overview", ""))
-        bullets = self._extract_key_points(content, max_points=5)
-
-        self._add_bullet_list(slide, bullets, Inches(1), Inches(2), Inches(11.3), Inches(5))
-
-    def _add_section_slide(self, title: str, content: str, max_subslides: int):
-        """通用内容章节（自动分页）"""
-        points = self._extract_key_points(content, max_points=max_subslides * 4)
-
-        # 按 4 条一组分页
-        for i in range(0, len(points), 4):
-            chunk = points[i:i + 4]
-            if not chunk:
-                break
-
-            slide_title = title if i == 0 else f"{title} (cont.)"
-            slide = self._create_content_slide(slide_title)
-            self._add_bullet_list(slide, chunk, Inches(1), Inches(2), Inches(11.3), Inches(5))
-
-    def _add_critical_analysis_slide(self, data: dict):
-        """批判性分析 — 优势 / 局限 两栏布局"""
-        slide = self._create_content_slide("Critical Analysis")
-
-        # 左侧：优势
-        left_box = slide.shapes.add_textbox(Inches(0.8), Inches(2), Inches(5.5), Inches(4.5))
-        tf = left_box.text_frame
+        sub = slide.shapes.add_textbox(Inches(0.9), Inches(4.6), Inches(11.5), Inches(1.4))
+        tf = sub.text_frame
         tf.word_wrap = True
-
         p = tf.paragraphs[0]
-        p.text = "Strengths"
-        p.font.size = Pt(22)
-        p.font.bold = True
-        p.font.color.rgb = self.COLORS["green"]
-        p.font.name = self.FONT_TITLE
+        p.text = authors
+        p.font.size = Pt(19)
+        p.font.color.rgb = RGBColor(0xBF, 0xD1, 0xF5)
+        p.font.name = self.FONT_BODY
+        p2 = tf.add_paragraph()
+        p2.text = " · ".join(x for x in [venue, year] if x)
+        p2.font.size = Pt(15)
+        p2.font.color.rgb = RGBColor(0x9A, 0xB0, 0xD8)
+        p2.font.name = self.FONT_BODY
+        p2.space_before = Pt(10)
 
-        strengths = self._extract_key_points(
-            data.get("strengths", data.get("critical_analysis", "")), max_points=4, prefix="strength"
-        )
-        for pt in strengths:
-            p = tf.add_paragraph()
-            p.text = f"✓ {pt}"
-            p.font.size = Pt(16)
-            p.font.color.rgb = self.COLORS["secondary"]
+        self._add_footer(slide, "PaperWise · AI 论文解读")
+
+    def _add_section_slides(self, title, content):
+        points = self._extract_points(content, max_points=12)
+        if not points:
+            return
+        per_page = 5
+        for i in range(0, len(points), per_page):
+            chunk = points[i:i + per_page]
+            page_title = title if i == 0 else f"{title}（续）"
+            slide = self._create_content_slide(page_title)
+            self._add_bullet_list(slide, chunk, Inches(0.9), Inches(1.7), Inches(11.5), Inches(5.2))
+
+    def _add_critical_slide(self, content):
+        strengths, limitations = self._split_strengths_limitations(content)
+        slide = self._create_content_slide("批判性分析")
+        self._add_two_column(slide, Inches(0.8), "✓ 优势", strengths, self.COLORS["green"])
+        self._add_two_column(slide, Inches(6.9), "▲ 局限", limitations, self.COLORS["red"])
+
+    def _add_figure_slide(self, fig):
+        path = fig.get("path") or fig.get("file") or ""
+        if not path:
+            return
+        p = Path(path)
+        if not p.is_absolute():
+            p = self.workspace / p
+        if not p.exists():
+            return
+        slide = self._create_content_slide("论文图示")
+        self._add_picture_fit(slide, p)
+        caption = fig.get("caption") or ""
+        if caption:
+            cb = slide.shapes.add_textbox(Inches(1.0), Inches(6.7), Inches(11.3), Inches(0.5))
+            tf = cb.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = caption[:160]
+            p.font.size = Pt(12)
+            p.font.italic = True
+            p.font.color.rgb = self.COLORS["gray"]
             p.font.name = self.FONT_BODY
-            p.space_after = Pt(12)
+            p.alignment = PP_ALIGN.CENTER
 
-        # 右侧：局限
-        right_box = slide.shapes.add_textbox(Inches(7), Inches(2), Inches(5.5), Inches(4.5))
-        tf = right_box.text_frame
-        tf.word_wrap = True
-
-        p = tf.paragraphs[0]
-        p.text = "Limitations"
-        p.font.size = Pt(22)
-        p.font.bold = True
-        p.font.color.rgb = self.COLORS["red"]
-        p.font.name = self.FONT_TITLE
-
-        limitations = self._extract_key_points(
-            data.get("limitations", data.get("critical_analysis", "")), max_points=4, prefix="limitation"
+    def _add_table_slide(self, table):
+        headers = table.get("headers") or []
+        rows = table.get("rows") or []
+        if not headers:
+            return
+        n_cols = min(len(headers), 6)
+        n_rows = min(len(rows) + 1, 8)
+        slide = self._create_content_slide("关键表格")
+        frame = slide.shapes.add_table(
+            n_rows, n_cols, Inches(0.7), Inches(1.7), Inches(12.0), Inches(0.5 * n_rows)
         )
-        for pt in limitations:
-            p = tf.add_paragraph()
-            p.text = f"⚠ {pt}"
-            p.font.size = Pt(16)
-            p.font.color.rgb = self.COLORS["secondary"]
-            p.font.name = self.FONT_BODY
-            p.space_after = Pt(12)
-
-    def _add_conclusion_slide(self, data: dict):
-        """总结页"""
-        slide = self._create_content_slide("Summary & Future Directions")
-
-        # 核心贡献
-        content = data.get("conclusion", data.get("sections", {}).get("conclusion", ""))
-        points = self._extract_key_points(content, max_points=6)
-        self._add_bullet_list(slide, points, Inches(1), Inches(2), Inches(11.3), Inches(4.5))
+        gtbl = frame.table
+        for c, h in enumerate(headers[:n_cols]):
+            cell = gtbl.cell(0, c)
+            cell.text = str(h)[:60]
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = self.COLORS["primary"]
+            self._style_cell(cell, bold=True, color=self.COLORS["white"], size=13)
+        for r, row in enumerate(rows[:n_rows - 1], start=1):
+            for c in range(n_cols):
+                val = row[c] if c < len(row) else ""
+                cell = gtbl.cell(r, c)
+                cell.text = str(val)[:80]
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = self.COLORS["light"] if r % 2 else self.COLORS["white"]
+                self._style_cell(cell, bold=False, color=self.COLORS["dark"], size=12)
 
     def _add_thank_you_slide(self):
-        """致谢页"""
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])
         self._set_bg(slide, self.COLORS["primary"])
-
-        text_box = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(11.3), Inches(2))
-        tf = text_box.text_frame
+        box = slide.shapes.add_textbox(Inches(1), Inches(2.7), Inches(11.3), Inches(2))
+        tf = box.text_frame
         p = tf.paragraphs[0]
-        p.text = "Thank You"
+        p.text = "谢谢观看"
         p.font.size = Pt(48)
         p.font.bold = True
         p.font.color.rgb = self.COLORS["white"]
         p.font.name = self.FONT_TITLE
         p.alignment = PP_ALIGN.CENTER
-
         p2 = tf.add_paragraph()
-        p2.text = "Questions & Discussion"
+        p2.text = "Q & A"
         p2.font.size = Pt(24)
-        p2.font.color.rgb = RGBColor(0xAA, 0xBB, 0xDD)
+        p2.font.color.rgb = RGBColor(0xBF, 0xD1, 0xF5)
         p2.font.name = self.FONT_BODY
         p2.alignment = PP_ALIGN.CENTER
-        p2.space_before = Pt(20)
+        p2.space_before = Pt(18)
+        self._add_footer(slide, "由 PaperWise 生成")
 
-        self._add_footer(slide, "Generated by PaperWise")
+    # ============ 辅助 ============
 
-    # === 辅助方法 ===
+    def _create_content_slide(self, title):
+        slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])
+        self._set_bg(slide, self.COLORS["white"])
 
-    def _create_content_slide(self, title: str):
-        """创建带标题栏的内容页。"""
-        slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])  # Blank
-
-        # 顶部标题栏
-        title_bar = slide.shapes.add_shape(
-            1, Inches(0), Inches(0), self.prs.slide_width, Inches(1.3)  # MSO_SHAPE.RECTANGLE = 1
+        bar = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), self.prs.slide_width, Inches(1.15)
         )
-        title_bar.fill.solid()
-        title_bar.fill.fore_color.rgb = self.COLORS["primary"]
-        title_bar.line.fill.background()
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = self.COLORS["primary"]
+        bar.line.fill.background()
 
-        tf = title_bar.text_frame
+        tf = bar.text_frame
         tf.word_wrap = True
+        tf.margin_left = Inches(0.55)
+        tf.margin_top = Inches(0.18)
         p = tf.paragraphs[0]
         p.text = title
-        p.font.size = Pt(28)
+        p.font.size = Pt(24)
         p.font.bold = True
         p.font.color.rgb = self.COLORS["white"]
         p.font.name = self.FONT_TITLE
         p.alignment = PP_ALIGN.LEFT
-        tf.margin_left = Inches(0.8)
-        tf.margin_top = Inches(0.3)
 
-        # 底部分隔线
         line = slide.shapes.add_shape(
-            1, Inches(0), Inches(7.2), self.prs.slide_width, Inches(0.05)
+            MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.2), self.prs.slide_width, Inches(0.06)
         )
         line.fill.solid()
-        line.fill.fore_color.rgb = self.COLORS["accent"]
+        line.fill.fore_color.rgb = self.COLORS["orange"]
         line.line.fill.background()
 
         self._add_footer(slide, self._slide_number(slide))
         return slide
 
-    def _add_bullet_list(self, slide, items: list, left, top, width, height):
-        """在幻灯片上添加项目符号列表。"""
+    def _add_bullet_list(self, slide, items, left, top, width, height):
         box = slide.shapes.add_textbox(left, top, width, height)
         tf = box.text_frame
         tf.word_wrap = True
-
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        size = self._fit_size(items)
         for i, item in enumerate(items):
-            if i == 0:
-                p = tf.paragraphs[0]
-            else:
-                p = tf.add_paragraph()
-            p.text = f"• {item}"
-            p.font.size = Pt(18)
-            p.font.color.rgb = self.COLORS["secondary"]
+            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            p.text = "• " + item
+            p.font.size = Pt(size)
+            p.font.color.rgb = self.COLORS["dark"]
             p.font.name = self.FONT_BODY
             p.space_after = Pt(14)
             p.level = 0
 
-    def _add_footer(self, slide, text: str):
-        """添加页脚。"""
-        footer = slide.shapes.add_textbox(Inches(0.5), Inches(7.0), Inches(5), Inches(0.4))
+    def _add_two_column(self, slide, left, heading, items, color):
+        box = slide.shapes.add_textbox(left, Inches(1.7), Inches(5.6), Inches(5.0))
+        tf = box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = heading
+        p.font.size = Pt(20)
+        p.font.bold = True
+        p.font.color.rgb = color
+        p.font.name = self.FONT_TITLE
+        p.space_after = Pt(10)
+        for item in items[:4]:
+            p = tf.add_paragraph()
+            p.text = "• " + item
+            p.font.size = Pt(14)
+            p.font.color.rgb = self.COLORS["dark"]
+            p.font.name = self.FONT_BODY
+            p.space_after = Pt(8)
+
+    def _add_picture_fit(self, slide, path):
+        if Image:
+            try:
+                with Image.open(str(path)) as im:
+                    iw, ih = im.size
+            except Exception:
+                iw = ih = 1
+        else:
+            iw = ih = 1
+        iw = iw or 1
+        ih = ih or 1
+        top_in = Inches(1.6)
+        bottom_in = Inches(7.15)
+        max_w = Inches(11.3)
+        max_h = bottom_in - top_in
+        ratio = min(int(max_w) / iw, int(max_h) / ih)
+        w = int(iw * ratio)
+        h = int(ih * ratio)
+        left = int((self.prs.slide_width - w) / 2)
+        top = int(top_in + max(0, (max_h - h) / 2))
+        slide.shapes.add_picture(str(path), left, top, width=w, height=h)
+
+    def _add_footer(self, slide, text):
+        footer = slide.shapes.add_textbox(Inches(0.5), Inches(7.05), Inches(9), Inches(0.4))
         tf = footer.text_frame
         p = tf.paragraphs[0]
         p.text = text
-        p.font.size = Pt(10)
+        p.font.size = Pt(9)
         p.font.color.rgb = self.COLORS["gray"]
         p.font.name = self.FONT_BODY
 
     def _set_bg(self, slide, color):
-        """设置幻灯片背景色。"""
-        bg = slide.background
-        fill = bg.fill
+        fill = slide.background.fill
         fill.solid()
         fill.fore_color.rgb = color
 
-    def _slide_number(self, slide) -> str:
-        """获取幻灯片编号。"""
+    def _slide_number(self, slide):
         try:
-            idx = list(self.prs.slides).index(slide)
-            return f"Slide {idx + 1}"
+            return f"{list(self.prs.slides).index(slide) + 1}"
         except ValueError:
             return ""
 
-    def _extract_key_points(self, text: str, max_points: int = 5, prefix: str = "") -> list[str]:
-        """从文本中提取关键要点。
+    def _style_cell(self, cell, bold, color, size):
+        tf = cell.text_frame
+        tf.word_wrap = True
+        for p in tf.paragraphs:
+            for run in p.runs:
+                run.font.bold = bold
+                run.font.size = Pt(size)
+                run.font.color.rgb = color
+                run.font.name = self.FONT_BODY
 
-        简单的启发式：按段落/换行分割，取前 N 条有意义的句子。
-        """
+    # ============ 内容提取 ============
+
+    def _extract_points(self, text, max_points=8):
+        import re
         if not text:
-            return ["(No content available)"]
+            return []
+        text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+        text = re.sub(r"#{1,6}\s*", "", text)
+        text = text.replace("\r", "\n")
 
-        # 按换行分割
-        lines = [l.strip() for l in text.replace("\r", "\n").split("\n") if l.strip()]
-
-        # 过滤太短或太长的行
-        points = []
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        raw = []
         for line in lines:
-            # 移除 markdown 标记
-            clean = line.lstrip("#-*• \t")
-            if 15 < len(clean) < 300 and not clean.startswith("```"):
-                points.append(clean)
+            low = line.lower()
+            if low.startswith(("figure ", "table ", "fig.", "tab.")):
+                continue
+            if len(line) > 260:
+                raw.extend(re.split(r"(?<=[。.!?;；])\s*", line))
+            else:
+                raw.append(line)
 
-        # 如果按行分割不够，尝试按句子
-        if len(points) < max_points // 2:
-            import re
-            sentences = re.split(r'(?<=[.!?])\s+', text)
-            points = [s.strip() for s in sentences if 15 < len(s.strip()) < 300]
+        points = []
+        seen = set()
+        for r in raw:
+            r = re.sub(r"^\s*(?:[-*•·>]|\d+[.、)])\s*", "", r).strip()
+            r = re.sub(r"\s+", " ", r)
+            if not (8 <= len(r) <= 220):
+                continue
+            key = r[:60]
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(r) > 220:
+                r = r[:219] + "…"
+            points.append(r)
+            if len(points) >= max_points * 2:
+                break
+        return points[:max_points]
 
-        return points[:max_points] if points else ["(No key points extracted)"]
+    def _split_strengths_limitations(self, content):
+        import re
+        low = content.lower()
+        markers = [
+            ("limitation", ["limitations", "limitation", "局限", "不足", "缺点", "weakness"]),
+            ("strength", ["strengths", "strength", "优势", "亮点", "优点", "contributions"]),
+        ]
+        split_idx = None
+        split_kind = None
+        for kind, keys in markers:
+            for k in keys:
+                i = low.find(k)
+                if i >= 0 and (split_idx is None or i < split_idx):
+                    split_idx = i
+                    split_kind = kind
+
+        strengths, limitations = [], []
+        if split_idx is not None:
+            part_a = content[:split_idx]
+            part_b = content[split_idx:]
+            if split_kind == "limitation":
+                strengths, limitations = part_a, part_b
+            else:
+                strengths, limitations = part_b, part_a
+        else:
+            limitations = content
+
+        def to_points(s):
+            pts = self._extract_points(s, max_points=4)
+            return pts if pts else (["（内容待补充）"] if s.strip() else [])
+
+        return to_points(strengths), to_points(limitations)
+
+    def _discover_figures(self):
+        figs = []
+        fig_dir = self.workspace / "figures"
+        if fig_dir.exists():
+            for ext in ("*.png", "*.jpg", "*.jpeg"):
+                for f in sorted(fig_dir.glob(ext)):
+                    figs.append({"path": str(f), "caption": ""})
+        return figs
+
+    def _discover_tables(self):
+        import json
+        tables = []
+        tbl_dir = self.workspace / "tables"
+        if tbl_dir.exists():
+            for f in sorted(tbl_dir.glob("table_*.json")):
+                try:
+                    tables.append(json.loads(f.read_text(encoding="utf-8")))
+                except Exception:
+                    continue
+        return tables
+
+    def _fit_size(self, items):
+        max_len = max((len(i) for i in items), default=0)
+        n = len(items)
+        if n <= 3 and max_len < 60:
+            return 20
+        if n <= 4 and max_len < 120:
+            return 18
+        if n <= 5 and max_len < 160:
+            return 16
+        return 14
 
 
 def get_pptx_system_prompt() -> str:

@@ -314,10 +314,10 @@ def recommend(
     days: int = typer.Option(7, "--days", "-d", help="只看最近 N 天"),
     topics: Optional[str] = typer.Option(
         None, "--topics", "-t",
-        help="逗号分隔的研究方向（默认从用户记忆读取）",
+        help="逗号分隔的研究兴趣（默认从用户记忆自动读取）",
     ),
 ):
-    """主动论文推荐 — 按研究方向从 arXiv 检索近期论文并评分"""
+    """主动论文推荐 — 按研究兴趣从 arXiv 检索近期论文并评分"""
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
     from paperwise.recommender import PaperRecommender
@@ -333,12 +333,12 @@ def recommend(
             user_id="default", topics=extra, limit=limit, days=days,
         )
 
-        console.print(f"研究方向: {('、'.join(result.get('topics', [])) or '（未设置）')}")
+        console.print(f"研究兴趣: {('、'.join(result.get('topics', [])) or '（暂未从记忆学习到，上传/解读论文后会自动积累）')}")
         papers = result.get("papers", [])
         if not papers:
             console.print(
                 f"[yellow]未找到推荐论文[/yellow]"
-                f"{'（先设置研究方向：--topics "3DGS,Agent" 或调用 POST /api/profile/research）' if not result.get('topics') else ''}"
+                f"{'（系统会从记忆自动学习研究兴趣，也可用 --topics 临时补充方向）' if not result.get('topics') else ''}"
             )
             return
 
@@ -416,8 +416,8 @@ def generate(
 def evaluate(
     report_path: Path = typer.Argument(..., help="生成的报告路径"),
     paper_dir: Path = typer.Argument(..., help="解析后的论文目录"),
-    model: str = typer.Option("deepseek-chat", "--model", "-m"),
-    provider: str = typer.Option("deepseek", "--provider", "-p"),
+    model: str = typer.Option(None, "--model", "-m", help="Judge 模型（默认取配置里的异源 Judge）"),
+    provider: str = typer.Option(None, "--provider", "-p", help="Judge 提供商（默认取配置里的异源 Judge）"),
 ):
     """评估报告质量 — Rubric 评分 + 幻觉检测"""
     from paperwise.core.llm_client import LLMClient
@@ -430,7 +430,14 @@ def evaluate(
         paper = Path(paper_dir) / "text.md"
         paper_text = paper.read_text(encoding="utf-8") if paper.exists() else ""
 
-        llm = LLMClient(provider=provider, model=model)
+        from paperwise.config.settings import get_settings
+        _s = get_settings()
+        llm = LLMClient(
+            provider=provider or _s.judge_provider,
+            model=model or _s.judge_model,
+            api_key=_s.judge_api_key_resolved,
+            base_url=_s.judge_base_url_resolved,
+        )
 
         # Rubric 评分
         console.print("[cyan]→[/cyan] Running rubric evaluation...")
@@ -502,6 +509,7 @@ def mcp_serve():
     console.print("[bold]PaperWise MCP Server[/bold] starting (stdio mode)")
     console.print("Waiting for MCP client connection...")
     mcp_main()
+
 
 
 if __name__ == "__main__":

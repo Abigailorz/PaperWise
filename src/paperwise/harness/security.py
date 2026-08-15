@@ -21,7 +21,8 @@ DANGEROUS_COMMAND_PATTERNS = [
 INJECTION_PATTERNS = [
     r'<\|im_start\|>', r'<\|im_end\|>',
     r'\[SYSTEM\].*\[/SYSTEM\]',
-    r'ignore (all |previous )?instructions',
+    r'ignore\s+(?:all\s+|previous\s+|prior\s+|above\s+|the\s+)*instructions',
+    r'disregard\s+(?:all\s+|previous\s+|prior\s+|above\s+|the\s+)*instructions',
     r'you are now', r'act as if', r'pretend to be',
     r'\[INST\].*\[/INST\]',
 ]

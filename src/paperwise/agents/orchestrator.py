@@ -28,6 +28,7 @@ class SubAgentSpec:
     task_template: str
     allowed_tools: list[str]  # 允许使用的工具子集
     output_path: str           # 产物输出路径（共享文件系统中的位置）
+    max_steps: int = 0         # 0 表示使用编排器默认值
 
 
 @dataclass
@@ -337,13 +338,14 @@ class AgentOrchestrator:
         for tool_name in tools.list_names():
             tools.get(tool_name)._agent_name = spec.name
 
-        harness = Harness(agent_workspace, max_steps=self.max_steps)
+        agent_max_steps = spec.max_steps or self.max_steps
+        harness = Harness(agent_workspace, max_steps=agent_max_steps)
 
         config = AgentConfig(
             name=spec.name,
             system_prompt=spec.system_prompt,
             model=self.model,
-            max_steps=self.max_steps,
+            max_steps=agent_max_steps,
         )
 
         agent = Agent(
@@ -378,6 +380,7 @@ class PaperAnalysisPipeline:
             allowed_tools=["read_file", "grep", "glob", "code_interpreter",
                           "write_file", "edit_file"],
             output_path="analysis/",
+            max_steps=40,
         )
 
     @staticmethod
@@ -391,6 +394,7 @@ class PaperAnalysisPipeline:
             task_template=gen.get_report_task(str(paper_dir)),
             allowed_tools=["read_file", "write_file", "edit_file", "glob", "grep"],
             output_path="report/",
+            max_steps=50,
         )
 
     @staticmethod

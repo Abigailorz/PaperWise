@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
     from paperwise.core.scheduler import Scheduler
     Scheduler.instance().start()
     task = asyncio.create_task(_periodic_flush())
-    recommend_task = asyncio.create_task(_recommend_loop(first_delay=3600))
+    recommend_task = asyncio.create_task(_recommend_loop())
     try:
         yield
     finally:
@@ -43,6 +43,9 @@ session_user: dict[str, str] = {}  # sid → user_id（用户数据隔离 + 推�
 ws_clients: dict[str, list[WebSocket]] = {}
 ws_buffer: dict[str, list[str]] = {}
 pending_access: dict[str, asyncio.Future] = {}  # request_id → Future[bool]
+_last_reco_push: dict[str, float] = {}  # sid → 上次主动推荐时间（monotonic）
+
+RECO_PUSH_INTERVAL = 300  # 同一会话主动推荐的节流间隔（秒）
 
 
 def _fire_scheduler_event(sid: str, event: dict) -> None:
@@ -145,6 +148,7 @@ async def upload_paper(sid: str, request: Request, file: UploadFile = File(...))
 
     # 让 Agent 处理论文
     response = await session.handle_file_upload(pdf_path)
+    asyncio.create_task(_maybe_push_recommendations(sid))
 
     return {
         "session_id": sid,
@@ -179,6 +183,7 @@ async def ingest_arxiv(sid: str, request: Request, payload: dict):
     user_id = request.headers.get("X-User-Id", "default")
     session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
     response = await session.handle_file_upload(pdf)
+    asyncio.create_task(_maybe_push_recommendations(sid))
 
     return {
         "session_id": sid,
@@ -201,6 +206,8 @@ async def chat(sid: str, request: Request, payload: dict):
     session = await _ensure_session(sid, ws_dir / f"session_{sid}", user_id=user_id)
 
     response = await session.chat(msg)
+    # 记忆更新后，事件驱动地尝试主动推荐（内部有节流与缓存）
+    asyncio.create_task(_maybe_push_recommendations(sid))
     return {"session_id": sid, "response": response}
 
 
@@ -243,8 +250,12 @@ async def get_history(sid: str):
 
 @app.post("/api/generate/pptx")
 async def generate_pptx(paper_dir: str = Query(...)):
-    """生成 PPTX"""
-    from paperwise.generators.pptx import PPTXGenerator
+    """生成 PPTX（LLM 内容 + 确定性渲染）。"""
+    from paperwise.config.settings import get_settings
+    from paperwise.core.llm_client import LLMClient
+    from paperwise.generators.slides import (
+        SlideContentBuilder, SlideDeckRenderer, build_fallback_slides,
+    )
 
     pd = Path(paper_dir)
     if not pd.exists():
@@ -255,40 +266,63 @@ async def generate_pptx(paper_dir: str = Query(...)):
         meta = json.loads((pd / "metadata.json").read_text(encoding="utf-8"))
 
     sections = {}
-    for sec in ["overview", "motivation", "methodology", "experiments", "critical_analysis", "conclusion"]:
+    for sec in ["overview", "motivation", "methodology", "experiments",
+                "critical_analysis", "related_work", "conclusion"]:
         for sub in ["analysis", "report/sections"]:
             sp = pd / sub / f"{sec}.md"
             if sp.exists():
-                sections[sec] = sp.read_text(encoding="utf-8")[:3000]
+                sections[sec] = sp.read_text(encoding="utf-8")[:8000]
                 break
 
-    gen = PPTXGenerator(pd)
-    out = gen.generate({"title": meta.get("title", pd.name), "authors": meta.get("author", ""),
-                        "venue": meta.get("subject", ""), "sections": sections, **sections})
+    paper_text = ""
+    if (pd / "text.md").exists():
+        paper_text = (pd / "text.md").read_text(encoding="utf-8", errors="replace").strip()
 
-    return {"path": out, "slides": len(gen.prs.slides),
-            "download_url": f"/api/download?path={out}"}
+    title = meta.get("title", pd.name)
+    deck = None
+    try:
+        s = get_settings()
+        llm = LLMClient(provider=s.llm_provider, model=s.default_model)
+        deck = await SlideContentBuilder(llm).build(
+            title=title, paper_text=paper_text, report_sections=sections,
+        )
+    except Exception:
+        deck = None
+    if deck is None:
+        deck = build_fallback_slides({
+            "title": title,
+            "authors": meta.get("author", ""),
+            "venue": meta.get("subject", ""),
+            "year": meta.get("year", ""),
+            "sections": sections,
+            "overview": paper_text,
+        })
+
+    out = pd / "presentation" / "slides.pptx"
+    renderer = SlideDeckRenderer(base_dir=pd)
+    path = renderer.render(deck, str(out))
+
+    from paperwise.generators.pptx_skill import detect_paper_type
+    paper_type = detect_paper_type(paper_text, title)
+
+    return {"path": path, "slides": len(renderer.prs.slides),
+            "skill": "nature-paper2ppt", "paper_type": paper_type,
+            "download_url": f"/api/download?path={path}"}
 
 
-@app.post("/api/profile/research")
-async def set_research_topics(request: Request, payload: dict):
-    """设置用户研究方向（供主动论文推荐使用）。"""
+@app.get("/api/interests")
+async def get_interests(request: Request):
+    """返回从记忆中自动学习的兴趣画像（无需手动填写研究方向）。"""
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
+    from paperwise.recommender import PaperRecommender
 
-    topics = [str(t).strip() for t in payload.get("topics", []) if str(t).strip()]
-    if not topics:
-        raise HTTPException(400, "topics 不能为空")
     user_id = request.headers.get("X-User-Id", "default")
-    mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
-    mem.remember(
-        category="preference",
-        data={"research_fields": json.dumps(topics, ensure_ascii=False)},
-        backstory="用户手动设置的研究方向（主动论文推荐依据）",
-        confidence=0.95,
-        tags=["research"],
-    )
-    return {"saved": True, "topics": topics}
+    ws_dir = get_settings().workspace_dir
+    mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
+    recommender = PaperRecommender(ws_dir, memory=mem)
+    profile = recommender.build_interest_profile(user_id)
+    return {"profile": profile}
 
 
 @app.get("/api/recommend")
@@ -371,6 +405,12 @@ async def download_file(path: str = Query(...)):
     return FileResponse(p, filename=p.name)
 
 
+@app.get("/api/exists")
+async def file_exists(path: str = Query(...)):
+    """返回文件是否存在（前端生成 PPT 后据此判断是否提供下载）。"""
+    return {"exists": Path(path).exists()}
+
+
 @app.get("/api/eval/results")
 async def eval_results():
     """返回 Agent 能力测试的历史结果（Pass@k / Pass^k）。"""
@@ -418,6 +458,11 @@ async def _ensure_session(sid: str, workspace: Path,
     model = settings.default_model
     llm = LLMClient(provider=provider, model=model)
     tools = ToolRegistry.create_default(workspace)
+    # 给 generate_pptx 工具注入 LLM，使其能生成结构化 slide 内容
+    try:
+        tools.get("generate_pptx").llm_client = llm
+    except Exception:
+        pass
     harness = Harness(workspace, max_steps=settings.max_steps)
     harness.context_manager.llm = llm
     memory = UserMemory(global_store / "memory")     # 跨 Session 共享
@@ -436,18 +481,15 @@ async def _ensure_session(sid: str, workspace: Path,
         skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
     skills = SkillLoader(skills_dir)
 
-    # 复制 skills 到 workspace 内，让 Agent 可以通过 read_file 访问
+    # 复制 skills 到 workspace 内，让 Agent 可以通过 read_file 访问（含 _shared 依赖）
     import shutil
     ws_skills = workspace / "skills"
-    if skills_dir.exists() and not ws_skills.exists():
-        shutil.copytree(skills_dir, ws_skills)
-    if not ws_skills.exists():
-        ws_skills.mkdir()
-        for name in skills.list_skills():
-            content = skills.load_skill(name)
-            if content:
-                (ws_skills / name / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
-                (ws_skills / name / "SKILL.md").write_text(content, encoding="utf-8")
+    ws_skills.mkdir(parents=True, exist_ok=True)
+    if skills_dir.exists():
+        for item in skills_dir.iterdir():
+            dst = ws_skills / item.name
+            if not dst.exists():
+                shutil.copytree(item, dst)
     # 配置 API embeddings（如果提供了 key）
     if settings.embedding_api_key:
         kb.retriever.dense.set_api_embedder(
@@ -623,57 +665,78 @@ async def _periodic_flush():
                 await _send_ws(sid, combined)
 
 
-async def _run_daily_recommendations() -> None:
-    """为活跃会话生成并推送论文推荐（主动服务，spec S6.4）。"""
+async def _push_recommendations_for_session(sid: str) -> bool:
+    """为单个活跃会话生成并推送论文推荐。返回是否成功推送。"""
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
     from paperwise.recommender import PaperRecommender
 
+    session = sessions.get(sid)
+    if session is None:
+        return False
+    user_id = session_user.get(sid, "default")
     ws_dir = get_settings().workspace_dir
+    try:
+        mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
+        recommender = PaperRecommender(ws_dir, memory=mem)
+        result = await recommender.recommend(user_id=user_id, limit=3)
+    except Exception:
+        return False
+    if not result.get("papers"):
+        return False
+
+    # 1. 注入会话上下文：Agent 下一轮对话即可主动提及
+    try:
+        from paperwise.core.types import Message, Role
+        lines = [
+            f"- [{p.get('title', '')[:60]}]({p.get('url', '')}) "
+            f"[匹配度 {p.get('score', 0):.0%}]"
+            for p in result["papers"]
+        ]
+        session.state.messages.append(Message(
+            role=Role.USER,
+            content=(
+                "<paper_recommendations>\n"
+                f"为你找到 {len(result['papers'])} 篇可能与你的研究兴趣相关的新论文：\n"
+                + "\n".join(lines) +
+                "\n如果用户感兴趣，主动提议解读其中一篇，并给出推荐理由。"
+                "</paper_recommendations>"
+            ),
+        ))
+    except Exception:
+        pass
+
+    # 2. WebSocket 广播：前端展示推荐横幅
+    await _broadcast(sid, "paper_recommendations", json.dumps({
+        "papers": result["papers"],
+        "topics": result.get("topics", []),
+    }, ensure_ascii=False))
+    return True
+
+
+async def _maybe_push_recommendations(sid: str) -> None:
+    """事件驱动的主动推荐：记忆更新后按节流间隔触发一次。"""
+    now = time.monotonic()
+    if now - _last_reco_push.get(sid, 0) < RECO_PUSH_INTERVAL:
+        return
+    _last_reco_push[sid] = now
+    try:
+        await _push_recommendations_for_session(sid)
+    except Exception:
+        pass
+
+
+async def _run_daily_recommendations() -> None:
+    """为所有活跃会话生成并推送论文推荐（每日定时兜底）。"""
     for sid in list(sessions.keys()):
-        session = sessions.get(sid)
-        if session is None:
-            continue
-        user_id = session_user.get(sid, "default")
         try:
-            mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
-            recommender = PaperRecommender(ws_dir, memory=mem)
-            result = await recommender.recommend(user_id=user_id, limit=3)
+            await _push_recommendations_for_session(sid)
         except Exception:
             continue
-        if not result.get("papers"):
-            continue
-
-        # 1. 注入会话上下文：Agent 下一轮对话即可主动提及
-        try:
-            from paperwise.core.types import Message, Role
-            lines = [
-                f"- [{p['title'][:60]}]({p['url']}) "
-                f"[匹配度 {p.get('score', 0):.0%}]"
-                for p in result["papers"]
-            ]
-            session.state.messages.append(Message(
-                role=Role.USER,
-                content=(
-                    "<paper_recommendations>\n"
-                    f"为你找到 {len(result['papers'])} 篇可能与研究方向相关的新论文：\n"
-                    + "\n".join(lines) +
-                    "\n如果用户感兴趣，主动提议解读其中一篇，并给出推荐理由。"
-                    "</paper_recommendations>"
-                ),
-            ))
-        except Exception:
-            pass
-
-        # 2. WebSocket 广播：前端展示推荐横幅
-        await _broadcast(sid, "paper_recommendations", json.dumps({
-            "papers": result["papers"],
-            "topics": result.get("topics", []),
-        }, ensure_ascii=False))
 
 
-async def _recommend_loop(first_delay: int = 3600) -> None:
-    """每日推荐循环：启动 1 小时后首次推送，之后每 24 小时一次。"""
+async def _recommend_loop(first_delay: int = 120) -> None:
+    """主动推荐循环：启动 2 分钟后首次推送，之后每 24 小时一次。"""
     await asyncio.sleep(first_delay)
     while True:
         try:

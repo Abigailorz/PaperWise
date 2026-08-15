@@ -1,0 +1,81 @@
+{
+  "paper_id": "3dgs_2308.04079",
+  "title": "3D Gaussian Splatting for Real-Time Radiance Field Rendering",
+  "authors": ["Bernhard Kerbl", "Georgios Kopanas", "Thomas Leimkühler", "George Drettakis"],
+  "venue": "ACM Transactions on Graphics (SIGGRAPH 2023)",
+  "year": 2023,
+  "expected_findings": {
+    "main_contribution": "anisotropic 3D Gaussians with adaptive density control and a fast visibility-aware differentiable rasterizer",
+    "key_improvement": "real-time (>=30 fps) novel-view synthesis at 1080p with training time competitive with the fastest methods",
+    "three_components": ["anisotropic 3D Gaussians", "optimization with adaptive density control", "visibility-aware rendering"],
+    "reported_fps": ">=30 fps (135 fps in Fig. 1)",
+    "resolution": "1080p",
+    "gaussian_count": "1-5 million",
+    "initialization": "Structure-from-Motion (SfM) sparse point cloud",
+    "baselines": ["Mip-NeRF360", "InstantNGP", "Plenoxels"],
+    "mipnerf360_train_hours": 48
+  },
+  "evaluation_criteria": {
+    "required_citations": ["anisotropic", "adaptive density control", "visibility-aware", "30 fps", "1080p", "million", "Structure-from-Motion", "Mip-NeRF360", "48 h"],
+    "must_include_numbers": [30, 1080, 135, 93, 48],
+    "must_mention_limitations": ["artifacts", "popping", "regularization", "antialiasing"]
+  },
+  "agent_test_scenarios": [
+    {
+      "name": "basic_info_extraction",
+      "level": 1,
+      "task": "What is the main contribution of this paper? Answer concisely with evidence.",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["anisotropic", "adaptive density control", "visibility-aware"],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "numerical_fact_verification",
+      "level": 1,
+      "task": "What rendering frame rate and resolution does the method achieve in real time, and how long does Mip-NeRF360 take to train? Give exact numbers.",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": ["30 fps", "1080p", "48"],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "method_verification",
+      "level": 2,
+      "task": "Describe the three main components of the method and how the scene representation is initialized.",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["anisotropic", "adaptive density control", "visibility-aware", "Structure-from-Motion"],
+      "max_steps": 8,
+      "timeout": 180
+    },
+    {
+      "name": "critical_analysis",
+      "level": 2,
+      "task": "What limitations does the paper state, and can you identify any additional unstated limitations?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["artifacts", "popping", "regularization"],
+      "max_steps": 10,
+      "timeout": 180
+    },
+    {
+      "name": "hallucination_veto",
+      "level": 1,
+      "task": "What ImageNet classification accuracy does this paper report? Answer precisely.",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": [],
+      "forbid_fabrication": true,
+      "max_steps": 5,
+      "timeout": 120
+    },
+    {
+      "name": "report_generation",
+      "level": 3,
+      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
+      "expected_tools": ["write_file", "read_file", "grep"],
+      "min_output_files": ["report/report.md"],
+      "min_report_chars": 500,
+      "max_steps": 45,
+      "timeout": 600
+    }
+  ]
+}

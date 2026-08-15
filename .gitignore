@@ -33,3 +33,11 @@ htmlcov/
 
 # PDF samples (large files)
 sample_papers/*.pdf
+
+# Runtime artifacts
+server*.log
+.arts/
+.merkle-snapshot.json
+
+# Large test PDF fixtures
+tests/test_data/real_papers/

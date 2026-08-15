@@ -5,7 +5,7 @@
 ## 快速开始
 
 ```bash
-cd D:\HuaweiMoveData\Users\13970\Desktop\PaperWise
+cd C:\Users\13970\Desktop\PaperWise
 source .venv/Scripts/activate
 
 # 1. 配置 API
@@ -46,7 +46,7 @@ python tests/run_agent_tests.py                # Agent 能力测试
 8. **arXiv 摄入** — `POST /api/sessions/{sid}/arxiv` 粘贴 arXiv 链接即可解析
 9. **主动提醒** — 定时器到期自动注入 Agent 上下文并广播
 10. **评估 Dashboard** — 打开 `http://localhost:8000/dashboard` 查看 Pass@k 趋势
-11. **主动论文推荐** — 按研究方向自动检索 arXiv 新论文，横幅一键"解读这篇"；每日定时推送
+11. **主动论文推荐** — 从记忆自动学习兴趣画像（无需手动填研究方向），据此检索 arXiv 新论文，横幅一键"解读这篇"；每日定时推送
 
 ## CLI 命令
 
@@ -90,7 +90,10 @@ PaperWise/
 ├── skills/                     # Skill 定义 (Markdown)
 ├── tests/                      # 38 单元测试 + Agent 能力测试 + MCP 集成脚本
 │   └── test_data/              # 测试数据集
+├── 测评/                       # 测评设计 / 结果 / 金标 / 消融实验 / 复现脚本
 ├── docs/                       # 文档
+│   ├── 项目全景解析.md           # 完整项目解析（推荐先读）
+│   ├── 逐文件解读.md             # 每个文件的作用说明
 │   ├── ARCHITECTURE.md         # 完整架构文档
 │   ├── AUDIT.md                # 技术审计报告
 │   ├── DESIGN-REVIEW.md        # Agent 设计评审与改进路线图
@@ -121,8 +124,8 @@ Agent Loop (增强 ReAct):
   └── 7 种退出条件
 
 RAG: Dense + Sparse + RRF + Cross-Encoder + HyDE + RAPTOR + GraphRAG
-记忆: Advanced JSON Cards + LLM提取 + 自动去重
-评估: Rubric + 幻觉检测 + Pass@k/Pass^k + 消融实验
+记忆: Advanced JSON Cards + LLM提取 + 自动去重 + 兴趣画像（主动推荐）
+评估: Rubric + 幻觉检测（异源 Judge）+ Pass@k/Pass^k + 消融实验
 ```
 
 ## 技术对照（书中 20 项核心技术）
@@ -159,4 +162,4 @@ RAG: Dense + Sparse + RRF + Cross-Encoder + HyDE + RAPTOR + GraphRAG
 | MEDIUM | 16 | 10 | 6 |
 | LOW | 8 | 2 | 6 |
 
-> 完整审计报告：`docs/AUDIT.md` | 架构详解：`docs/ARCHITECTURE.md` | 设计评审：`docs/DESIGN-REVIEW.md`
+> 完整审计报告：`docs/AUDIT.md` | 架构详解：`docs/ARCHITECTURE.md` | 项目全景解析：`docs/项目全景解析.md` | 设计评审：`docs/DESIGN-REVIEW.md`
