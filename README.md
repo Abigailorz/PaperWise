@@ -5,7 +5,7 @@
 ## 快速开始
 
 ```bash
-cd C:\Users\13970\Desktop\PaperWise
+cd PaperWise
 source .venv/Scripts/activate
 
 # 1. 配置 API

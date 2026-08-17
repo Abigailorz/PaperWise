@@ -349,7 +349,8 @@ class KnowledgeBase:
     - 查询扩展: HyDE (Hypothetical Document Embeddings) ✅
     """
 
-    def __init__(self, base_path: Path, backend: str = "sqlite"):
+    def __init__(self, base_path: Path, backend: str = "sqlite",
+                 advanced_rag: bool = False):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         from paperwise.memory.storage import create_storage

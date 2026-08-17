@@ -1,0 +1,6 @@
+{
+  "mode": "local_test_papers",
+  "recall_at_3": 0.4167,
+  "precision_at_3": 0.2222,
+  "mrr": 0.5
+}

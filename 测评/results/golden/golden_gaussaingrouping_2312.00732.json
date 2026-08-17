@@ -1,0 +1,139 @@
+{
+  "paper_id": "gaussaingrouping_2312.00732",
+  "title": "Gaussian Grouping: Segment and Edit Anything in 3D Scenes",
+  "authors": [
+    "Mingqiao Ye",
+    "Martin Danelljan",
+    "Fisher Yu",
+    "Lei Ke"
+  ],
+  "venue": "ECCV 2024",
+  "year": 2024,
+  "expected_findings": {
+    "main_contribution": "extend Gaussian Splatting to jointly reconstruct and segment anything in open-world 3D scenes by augmenting each Gaussian with a compact Identity Encoding",
+    "key_improvement": "discrete and grouped 3D Gaussians can reconstruct, segment and edit anything in 3D with high visual quality, fine granularity and efficiency",
+    "foundation_models": [
+      "SAM"
+    ],
+    "supervision": "2D mask predictions by Segment Anything Model plus 3D spatial consistency regularization, without expensive 3D labels",
+    "applications": [
+      "3D object removal",
+      "inpainting",
+      "colorization",
+      "style transfer",
+      "scene recomposition"
+    ]
+  },
+  "evaluation_criteria": {
+    "required_citations": [
+      "Identity Encoding",
+      "SAM",
+      "3D spatial consistency",
+      "segment",
+      "edit",
+      "open-world"
+    ],
+    "must_mention_limitations": [
+      "failure cases",
+      "occlusion"
+    ]
+  },
+  "agent_test_scenarios": [
+    {
+      "name": "basic_info_extraction",
+      "level": 1,
+      "task": "What is the main contribution of Gaussian Grouping? Answer concisely with evidence.",
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "Identity Encoding",
+        "segment",
+        "edit",
+        "3D Gaussians"
+      ],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "method_verification",
+      "level": 2,
+      "task": "How does Gaussian Grouping supervise Identity Encoding during rendering without 3D labels?",
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "SAM",
+        "2D mask",
+        "spatial consistency",
+        "regularization"
+      ],
+      "max_steps": 8,
+      "timeout": 180
+    },
+    {
+      "name": "application_enumeration",
+      "level": 1,
+      "task": "What scene editing applications does Gaussian Grouping support? List them.",
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "removal",
+        "inpainting",
+        "colorization",
+        "style transfer",
+        "recomposition"
+      ],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "critical_analysis",
+      "level": 2,
+      "task": "What failure cases or limitations does the paper discuss, and can you identify additional ones?",
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "failure cases",
+        "occlusion"
+      ],
+      "max_steps": 10,
+      "timeout": 180
+    },
+    {
+      "name": "hallucination_veto",
+      "level": 1,
+      "task": "What PSNR does Gaussian Grouping achieve on the Replica dataset? Answer precisely.",
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
+      "expected_answer_contains": [],
+      "forbid_fabrication": true,
+      "max_steps": 5,
+      "timeout": 120
+    },
+    {
+      "name": "report_generation",
+      "level": 3,
+      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
+      "expected_tools": [
+        "write_file",
+        "read_file",
+        "grep"
+      ],
+      "min_output_files": [
+        "report/report.md"
+      ],
+      "min_report_chars": 500,
+      "max_steps": 45,
+      "timeout": 600
+    }
+  ]
+}

@@ -466,7 +466,7 @@ async def _ensure_session(sid: str, workspace: Path,
     harness = Harness(workspace, max_steps=settings.max_steps)
     harness.context_manager.llm = llm
     memory = UserMemory(global_store / "memory")     # 跨 Session 共享
-    kb = KnowledgeBase(global_store / "kb")           # 跨 Session 共享
+    kb = KnowledgeBase(global_store / "kb", advanced_rag=get_settings().advanced_rag)           # 跨 Session 共享
     kb.set_llm_client(llm)
     # 周期性记忆整合（间隔内自动跳过）
     try:

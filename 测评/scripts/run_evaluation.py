@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-PROJECT = Path(r"C:\Users\13970\Desktop\PaperWise")
+PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "src"))
 
 from paperwise.config.settings import get_settings
@@ -372,11 +372,17 @@ async def main():
         print(f"\n== Part B: LLM agent (paper={args.paper}, k={args.k}) ==")
         report["part_b"] = await run_part_b(args.paper, args.k, args.scenario, args.model)
 
-    out = Path(r"C:\Users\13970\Documents\Codex\2026-08-13\new-chat-2\outputs")
+    out = PROJECT / "workspace" / "benchmarks"
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"paperwise_eval_{int(time.time())}.json"
+    path = out / f"agent_eval_{int(time.time())}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nsaved: {path}")
+
+    # 写入 latest.json 指针
+    latest = out / "latest_agent.json"
+    latest.write_text(json.dumps({"latest": str(path.relative_to(PROJECT)),
+                                    "report": report}, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    print(f"\nsaved: {path}\nlatest: {latest}")
 
 
 if __name__ == "__main__":

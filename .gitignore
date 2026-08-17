@@ -33,6 +33,7 @@ htmlcov/
 
 # PDF samples (large files)
 sample_papers/*.pdf
+test.pdf
 
 # Runtime artifacts
 server*.log

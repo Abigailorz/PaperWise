@@ -14,13 +14,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-PROJECT = Path(r"C:\Users\13970\Desktop\PaperWise")
+PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "src"))
 
-EVAL_DIR = Path(r"C:\Users\13970\Documents\Codex\2026-08-13\new-chat-2\work\eval")
+EVAL_DIR = PROJECT / "workspace" / "benchmarks"
 PARSED_DIR = EVAL_DIR / "parsed"
 GOLDEN_DIR = EVAL_DIR / "golden"
-OUT_DIR = Path(r"C:\Users\13970\Documents\Codex\2026-08-13\new-chat-2\outputs")
+OUT_DIR = PROJECT / "workspace" / "benchmarks"
 
 # 让 Agent 运行时的 workspace 落到可写目录，避免污染桌面项目。
 EVAL_WS = EVAL_DIR / "eval_workspace"
@@ -37,6 +37,7 @@ PAPERS = {
     "3dgs_2308.04079": "golden_3dgs_2308.04079.json",
     "langsplat_2312.16084": "golden_langsplat_2312.16084.json",
     "feature3dgs_2312.03203": "golden_feature3dgs_2312.03203.json",
+    "gaussaingrouping_2312.00732": "golden_gaussaingrouping_2312.00732.json",
 }
 
 
@@ -157,9 +158,15 @@ async def main():
         }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUT_DIR / f"paperwise_real_eval_{int(time.time())}.json"
+    path = OUT_DIR / f"real_eval_{int(time.time())}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nsaved: {path}", flush=True)
+
+    # 写入 latest.json 指针
+    latest = OUT_DIR / "latest_real_eval.json"
+    latest.write_text(json.dumps({"latest": str(path.relative_to(PROJECT)),
+                                    "report": report}, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    print(f"\nsaved: {path}\nlatest: {latest}", flush=True)
 
 
 if __name__ == "__main__":

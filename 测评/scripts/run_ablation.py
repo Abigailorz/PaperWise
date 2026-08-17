@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-PROJECT = Path(r"C:\Users\13970\Desktop\PaperWise")
+PROJECT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT / "src"))
 
 os.environ.pop("PAPERWISE_RESEARCH_FIELDS", None)  # 排除环境变量兜底
@@ -200,10 +200,18 @@ async def main():
         "ablation_1_safety": run_safety_ablation(),
         "ablation_2_memory_recommendation": await run_recommendation_ablation(),
     }
-    out = Path(r"C:\Users\13970\Documents\Codex\2026-08-13\new-chat-2\outputs\ablation_result.json")
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out = PROJECT / "workspace" / "benchmarks"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"ablation_{int(time.time())}.json"
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 写入 latest.json 指针
+    latest = out / "latest_ablation.json"
+    latest.write_text(json.dumps({"latest": str(path.relative_to(PROJECT)),
+                                    "report": report}, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    print("\nsaved:", out)
+    print(f"\nsaved: {path}\nlatest: {latest}")
 
 
 if __name__ == "__main__":

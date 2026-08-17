@@ -1,0 +1,9 @@
+{
+  "model": "deepseek-v4-flash",
+  "success_rate": 0.8,
+  "pass_at_1": 0.8,
+  "avg_score": "85.0%",
+  "avg_steps": "9.8",
+  "avg_duration": "86.5s",
+  "total_errors": 2
+}

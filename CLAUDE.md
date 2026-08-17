@@ -36,3 +36,10 @@ PaperWise 是一个 AI Agent 驱动的学术论文智能解读系统。输入 PD
 - 修改代码后同步更新 README.md / docs/ARCHITECTURE.md / docs/AUDIT.md
 - 版本号统一维护（pyproject.toml / api/server.py / mcp/server.py / README 标题）
 - 工具数量、行数等统计以 `src/paperwise/` 实际代码为准，不手工编造
+
+
+## 路径与平台约定
+
+- 文档和脚本中不得出现用户名、桌面路径或平台特定的绝对路径。
+- 使用相对路径（如 `cd PaperWise`）或从 `__file__` / `PAPERWISE_WORKSPACE` 推导。
+- CLI 示例假设工作目录就是项目根目录。

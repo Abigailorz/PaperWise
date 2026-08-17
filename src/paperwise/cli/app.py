@@ -116,7 +116,7 @@ def analyze(
         global_store = settings.workspace_dir / ".paperwise"
         global_store.mkdir(parents=True, exist_ok=True)
         memory = UserMemory(global_store / "memory")
-        kb = KnowledgeBase(global_store / "kb")
+        kb = KnowledgeBase(global_store / "kb", advanced_rag=get_settings().advanced_rag)
         kb.set_llm_client(llm)
         try:
             mem_report = memory.maybe_consolidate()

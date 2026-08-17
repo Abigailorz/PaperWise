@@ -15,7 +15,7 @@
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable
 from dataclasses import dataclass, field
 
 from paperwise.core.types import AgentResult
@@ -223,6 +223,164 @@ class EvolutionEngine:
         self._save()
         return True
 
+
+
+    # === 安全门控部署 ===
+
+    async def deploy(self, pattern_id: int, dry_run: bool = False,
+                     require_approval: bool = True,
+                     approver: Optional[Callable[[EvolutionPattern], bool]] = None) -> dict:
+        """带安全门控的部署。
+
+        流程：
+          1. 保存当前系统状态快照
+          2. 跑回归基线（pytest + agent 能力测试）
+          3. 应用候选更新
+          4. 跑回归验证
+          5. 验证失败则自动回滚
+          6. 可选人工审批
+
+        Args:
+            pattern_id: 待部署模式索引
+            dry_run: True 时不真正应用更新，只返回建议内容
+            require_approval: 是否需要外部审批函数返回 True
+            approver: 审批函数 (pattern) -> bool
+
+        Returns:
+            {"status": "deployed"|"dry_run"|"rejected"|"rolled_back"|"pending_approval",
+             "pattern": ..., "baseline": ..., "after": ..., "reason": ...}
+        """
+        import asyncio
+        import subprocess
+
+        if pattern_id >= len(self.patterns):
+            return {"status": "rejected", "reason": "invalid_pattern_id"}
+
+        pattern = self.patterns[pattern_id]
+
+        # 1. 保存快照
+        snapshot = self._snapshot_state()
+
+        # 2. 基线测试
+        baseline = await self._run_regression()
+        if not baseline.get("passed"):
+            return {"status": "rejected", "reason": "baseline_failed",
+                    "baseline": baseline, "pattern": pattern}
+
+        if dry_run:
+            return {"status": "dry_run", "pattern": pattern,
+                    "suggested_update": pattern.suggested_update,
+                    "baseline": baseline}
+
+        # 3. 人工审批门控
+        if require_approval:
+            if approver is None or not approver(pattern):
+                pattern.status = "pending_approval"
+                self._save()
+                return {"status": "pending_approval", "pattern": pattern, "baseline": baseline}
+
+        # 4. 应用更新
+        try:
+            self._apply_pattern(pattern)
+        except Exception as e:
+            self._restore_snapshot(snapshot)
+            return {"status": "rolled_back", "reason": f"apply_failed:{e}",
+                    "pattern": pattern, "baseline": baseline}
+
+        # 5. 验证测试
+        after = await self._run_regression()
+        if not after.get("passed"):
+            self._restore_snapshot(snapshot)
+            return {"status": "rolled_back", "reason": "regression_failed",
+                    "pattern": pattern, "baseline": baseline, "after": after}
+
+        pattern.status = "deployed"
+        self._save()
+        return {"status": "deployed", "pattern": pattern,
+                "baseline": baseline, "after": after}
+
+    def _snapshot_state(self) -> dict:
+        """创建当前系统状态快照（仅覆盖可能被进化修改的文件）。"""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        snapshot = {
+            "learned_knowledge": self._read_if_exists(project_root / "learned_knowledge.md"),
+            "skill_improvements": self._read_if_exists(self.storage_dir / "skill_improvements.md"),
+            "harness_improvements": self.store.get("evolution", "harness_improvements"),
+            "skills_dir": {},
+        }
+        skills_dir = project_root / "skills"
+        if skills_dir.exists():
+            for skill_md in skills_dir.rglob("SKILL.md"):
+                rel = str(skill_md.relative_to(project_root))
+                snapshot["skills_dir"][rel] = skill_md.read_text(encoding="utf-8")
+        return snapshot
+
+    def _restore_snapshot(self, snapshot: dict) -> None:
+        """从快照恢复系统状态。"""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        if snapshot.get("learned_knowledge") is not None:
+            (project_root / "learned_knowledge.md").write_text(
+                snapshot["learned_knowledge"], encoding="utf-8")
+        if snapshot.get("skill_improvements") is not None:
+            (self.storage_dir / "skill_improvements.md").write_text(
+                snapshot["skill_improvements"], encoding="utf-8")
+        if snapshot.get("harness_improvements") is not None:
+            self.store.put("evolution", "harness_improvements", snapshot["harness_improvements"])
+        for rel, content in snapshot.get("skills_dir", {}).items():
+            (project_root / rel).write_text(content, encoding="utf-8")
+
+    def _read_if_exists(self, path: Path) -> Optional[str]:
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def _apply_pattern(self, pattern: EvolutionPattern) -> None:
+        """直接应用模式更新（供 deploy 调用）。"""
+        if pattern.pattern_type == "knowledge":
+            self._deploy_to_knowledge(pattern)
+        elif pattern.pattern_type == "instruction":
+            self._deploy_to_instruction(pattern)
+        elif pattern.pattern_type == "program":
+            self._deploy_to_program(pattern)
+
+    async def _run_regression(self) -> dict:
+        """运行回归测试套件。
+
+        当前实现调用 pytest 和 agent 能力测试（单次）。
+        未来可接入更完整的基准。"""
+        import asyncio
+        import subprocess
+        import sys
+
+        project_root = Path(__file__).resolve().parent.parent.parent
+        results = {"passed": True, "checks": []}
+
+        async def run(cmd: list[str], name: str, timeout: int = 180) -> dict:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, *cmd,
+                cwd=str(project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                ok = proc.returncode == 0
+                return {"name": name, "passed": ok,
+                        "stdout": stdout.decode("utf-8", errors="replace")[-2000:],
+                        "stderr": stderr.decode("utf-8", errors="replace")[-1000:]}
+            except asyncio.TimeoutError:
+                proc.kill()
+                return {"name": name, "passed": False, "reason": "timeout"}
+
+        # pytest 单元测试
+        r1 = await run(["-m", "pytest", "tests/", "-q"], "pytest")
+        results["checks"].append(r1)
+
+        # agent 能力测试（单次，不跑多次 k）
+        r2 = await run(["tests/run_agent_tests.py", "--k", "1", "--paper", "simple"],
+                       "agent_tests")
+        results["checks"].append(r2)
+
+        results["passed"] = all(c["passed"] for c in results["checks"])
+        return results
     def _deploy_to_knowledge(self, pattern: EvolutionPattern):
         """将教训写入经验知识库，并注入到系统提示词文件。"""
         # 1. 写入进化日志

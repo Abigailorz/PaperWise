@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 
 
 class Settings(BaseSettings):
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     tool_output_max_chars: int = Field(default=8000, alias="PAPERWISE_TOOL_OUTPUT_MAX_CHARS")
     archive_window: int = Field(default=20, alias="PAPERWISE_ARCHIVE_WINDOW")
     trajectory_max: int = Field(default=100, alias="PAPERWISE_TRAJECTORY_MAX")
+
+    # === RAG ===
+    advanced_rag: bool = Field(default=False, alias="PAPERWISE_ADVANCED_RAG")
+    # False: 基础 RAG（Dense + BM25 + Rerank）
+    # True: 高级 RAG（额外启用 HyDE / RAPTOR / GraphRAG / 上下文感知查询）
 
     # === Provider Resolution ===
     @property
@@ -119,6 +124,22 @@ class Settings(BaseSettings):
             base_url=self.judge_base_url_resolved,
         )
 
+    # === Safety Validation ===
+    @model_validator(mode='after')
+    def judge_must_be_heterogeneous(self):
+        """Judge 不应与主模型完全相同；至少 provider 或 model 不同。"""
+        same_provider = self.judge_provider == self.llm_provider
+        same_model = self.judge_model == self.default_model
+        if same_provider and same_model:
+            allowed = os.environ.get("PAPERWISE_ALLOW_HOMOGENEOUS_JUDGE", "0") == "1"
+            if not allowed:
+                raise ValueError(
+                    "Judge model must differ from the main LLM to avoid same-source bias. "
+                    "Set a different PAPERWISE_JUDGE_MODEL / PAPERWISE_JUDGE_PROVIDER, "
+                    "or set PAPERWISE_ALLOW_HOMOGENEOUS_JUDGE=1 to bypass."
+                )
+        return self
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -134,5 +155,29 @@ def get_settings() -> Settings:
     """Get or create the global Settings instance."""
     global _settings
     if _settings is None:
+        _warn_if_env_tracked()
         _settings = Settings()
     return _settings
+
+
+
+def _warn_if_env_tracked() -> None:
+    """如果 .env 被 git 跟踪，打印安全警告。"""
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(env_path)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            print(
+                "\n[SECURITY WARNING] .env is tracked by git. "
+                "API keys must not be committed. Run: git rm --cached .env\n"
+            )
+    except Exception:
+        pass
