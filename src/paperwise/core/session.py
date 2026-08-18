@@ -29,6 +29,7 @@ from paperwise.core.types import (
 )
 from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
+from paperwise.core.agent_loop import AgentLoopMixin
 
 
 @dataclass
@@ -45,7 +46,7 @@ class SessionState:
     pending_requests: list[str] = field(default_factory=list)  # 用户未完成的请求
 
 
-class AgentSession:
+class AgentSession(AgentLoopMixin):
     """对话式 Agent Session
 
     核心特性：
@@ -366,83 +367,8 @@ class AgentSession:
 
     # ══════════ 退出条件 ══════════
 
-    def _check_exit(self) -> Optional[str]:
-        """检查硬限制、停滞和 Plan 完成情况。"""
-        if self._total_steps >= self._hard_cap:
-            return f"hard_step_cap ({self._hard_cap})"
 
-        if self._tokens_used > self._token_limit:
-            return f"token_budget ({self._tokens_used}/{self._token_limit})"
 
-        if self.harness.is_circuit_open():
-            return f"circuit_breaker ({self.harness.consecutive_errors} errors)"
-
-        elapsed = time.time() - self._start_time
-        if elapsed > self._time_budget:
-            return f"time_budget ({elapsed:.0f}s)"
-
-        if self.harness.consecutive_errors >= 5:
-            return f"consecutive_errors ({self.harness.consecutive_errors})"
-
-        stagnation = self._detect_stagnation(window=4)
-        if stagnation:
-            return f"stagnation: {stagnation}"
-
-        return None
-
-    def _detect_stagnation(self, window: int = 4) -> Optional[str]:
-        """检测最近窗口内是否重复相同的工具调用。"""
-        if len(self.state.messages) < window * 2:
-            return None
-        recent = self.state.messages[-window * 2:]
-        tool_calls = []
-        for m in recent:
-            if m.role == Role.ASSISTANT and m.tool_calls:
-                tool_calls.extend([
-                    (tc.name, json.dumps(tc.arguments, sort_keys=True))
-                    for tc in m.tool_calls
-                ])
-        if len(tool_calls) >= window and len(set(tool_calls[-window:])) == 1:
-            name, _ = tool_calls[-1]
-            return f"repeated {name} calls"
-        return None
-
-    def _budget_note(self) -> Optional[str]:
-        """根据剩余步数/Token 和 Plan 进度给出分级提示。"""
-        steps_ratio = self._total_steps / max(self._max_steps_per_turn, 1)
-        tokens_ratio = self._tokens_used / max(self._token_limit, 1)
-        usage = max(steps_ratio, tokens_ratio)
-
-        plan_hint = ""
-        if self._plan.tasks and not self._plan.done:
-            done, total = self._plan.progress
-            plan_hint = f" Plan progress: {done}/{total} tasks done."
-
-        if usage > 0.9:
-            return (
-                "<budget_alert>CRITICAL: Budget almost exhausted "
-                f"({self._total_steps}/{self._max_steps_per_turn} steps, "
-                f"{self._tokens_used}/{self._token_limit} tokens).{plan_hint} "
-                "Stop exploring. Synthesize what you have. Write the final report NOW. "
-                "Do NOT start new searches or deep analyses.</budget_alert>"
-            )
-        elif usage > 0.7:
-            return (
-                "<budget_note>High budget usage. "
-                f"{plan_hint} Focus on the most important remaining sections. "
-                "Skip non-essential details.</budget_note>"
-            )
-        elif usage > 0.5:
-            return (
-                "<budget_note>Half of budget used. "
-                f"{plan_hint} Prioritize tasks on the critical path.</budget_note>"
-            )
-        elif usage > 0.25:
-            return (
-                "<budget_note>Budget being consumed steadily. "
-                f"{plan_hint} Avoid redundant tool calls.</budget_note>"
-            )
-        return None
 
     # ══════════ 论文处理 ══════════
 
@@ -768,114 +694,9 @@ class AgentSession:
                 output=f"[Error] {type(e).__name__}: {e}", is_error=True,
             )
 
-    def _update_plan_from_tool_call(self, tool_call: ToolCall, result: ToolResult) -> None:
-        """根据观察到的工具执行结果标记 Plan 任务完成。"""
-        plan = self._plan
-        if not plan.tasks:
-            return
 
-        name = tool_call.name
-        args = tool_call.arguments
-        path = str(args.get("path", "")).lower()
 
-        if name == "read_file" and "text.md" in path and not result.is_error:
-            plan.mark_done("read_paper", evidence=path)
-        elif name == "write_file":
-            if path.endswith("report.md"):
-                plan.mark_done("generate_report", evidence=path)
-            if "analysis/plan.md" in path:
-                plan.mark_in_progress("analyze_method")
-        elif name == "code_interpreter" and not result.is_error:
-            plan.mark_done("verify_data", evidence="code executed")
-        elif name == "generate_pptx" and not result.is_error:
-            plan.mark_done("generate_pptx", evidence=path)
 
-    def _looks_complete(self, text: str) -> bool:
-        """检查文本是否像是最终交付物。"""
-        complete_markers = [
-            "report has been generated", "report is complete",
-            "final answer", "task complete", "all sections",
-            "analysis complete", "ppt has been generated", "slides are ready",
-        ]
-        text_lower = text.lower()
-        return any(m.lower() in text_lower for m in complete_markers)
-
-    async def _verify_completion(self) -> bool:
-        """验证输出存在，并可选择在最终验收前进行 Judge Review。"""
-        if not self._plan.tasks:
-            return True
-
-        if not self._plan.done:
-            done, total = self._plan.progress
-            self._emit("verify", f"Plan incomplete ({done}/{total})")
-            return False
-
-        checks = []
-        report_path = self.workspace / "report" / "report.md"
-        report_task = self._plan.get("generate_report")
-        if report_task:
-            checks.append(("report.md exists", report_path.exists()))
-            if report_path.exists():
-                size = len(report_path.read_text(encoding="utf-8"))
-                checks.append(("report size > 500", size > 500))
-
-        pptx_task = self._plan.get("generate_pptx")
-        if pptx_task:
-            output_dir = self.workspace / "output"
-            ppts = list(self.workspace.glob("*.pptx"))
-            if output_dir.exists():
-                ppts.extend(output_dir.glob("*.pptx"))
-            checks.append(("pptx file", len(ppts) > 0))
-
-        verify_task = self._plan.get("verify_data")
-        if verify_task:
-            checks.append(("verify_data done", verify_task.status == TaskStatus.DONE))
-
-        passed = sum(1 for _, ok in checks if ok)
-        total = len(checks)
-        self._emit("verify", f"Completion check: {passed}/{total} passed")
-
-        if total and passed < total * 0.6:
-            return False
-
-        return await self._judge_review()
-
-    async def _judge_review(self) -> bool:
-        """当配置了 Judge 模型时，在最终验收前进行异源评审。"""
-        from paperwise.config.settings import get_settings
-        settings = get_settings()
-        if not settings.judge_api_key_resolved:
-            return True
-
-        try:
-            judge = settings.build_judge_llm()
-            report_path = self.workspace / "report" / "report.md"
-            report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
-            task = self._current_task_description or "完成用户请求"
-            prompt = (
-                f"Review whether the following report satisfies the task: {task}\n\n"
-                f"Report (first 2000 chars):\n{report[:2000]}\n\n"
-                "Reply with a single JSON object: {\"passed\": true/false, \"feedback\": \"...\"}"
-            )
-            resp = await judge.chat(
-                [{"role": "user", "content": prompt}], temperature=0.1, max_tokens=300
-            )
-            content = (resp.content or "").strip()
-            match = re.search(r"\{.*?\}", content, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-                if not data.get("passed", True):
-                    fb = data.get("feedback", "请继续改进。")
-                    fb_msg = Message(
-                        role=Role.USER,
-                        content=f"<judge_feedback>{fb}</judge_feedback>",
-                    )
-                    self.state.messages.append(fb_msg)
-                    self._hierarchical_memory.add_turn(fb_msg)
-                return bool(data.get("passed", True))
-        except Exception as e:
-            self._emit("warn", f"Judge review skipped: {e}")
-        return True
 
     async def _maybe_compress_memory(self) -> None:
         """在需要时使用分层记忆进行软压缩。"""

@@ -2,17 +2,19 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\13970\Desktop\PaperWise\src")
+PROJECT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT / "src"))
 
 from paperwise.parsers.pdf_parser import PDFParser
 
-REAL = Path(r"C:\Users\13970\Desktop\PaperWise\tests\test_data\real_papers")
-OUT = Path(r"C:\Users\13970\Documents\Codex\2026-08-13\new-chat-2\work\eval\parsed")
+REAL = PROJECT / "tests" / "test_data" / "real_papers"
+OUT = PROJECT / "workspace" / "benchmarks" / "parsed"
 
 PAPERS = {
     "3dgs_2308.04079": "3dgs_2308.04079.pdf",
     "langsplat_2312.16084": "langsplat_2312.16084.pdf",
     "feature3dgs_2312.03203": "feature3dgs_2312.03203.pdf",
+    "gaussaingrouping_2312.00732": "gaussaingrouping_2312.00732.pdf",
 }
 
 

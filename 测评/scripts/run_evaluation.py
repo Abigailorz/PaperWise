@@ -47,7 +47,7 @@ def run_part_a():
     from paperwise.core.types import Message, Role, ToolCall, AgentState
     from paperwise.memory.user_memory import UserMemory
     from paperwise.recommender import PaperRecommender
-    from paperwise.generators.pptx import PPTXGenerator
+    from paperwise.generators.slides import SlideDeckRenderer, build_fallback_slides
     from PIL import Image
     import tempfile
 
@@ -117,12 +117,20 @@ def run_part_a():
     (ppt_dir / "tables").mkdir()
     (ppt_dir / "tables" / "table_1.json").write_text(json.dumps(
         {"headers": ["Method", "Acc"], "rows": [["Base", "0.8"], ["Ours", "0.93"]]}), encoding="utf-8")
-    gen = PPTXGenerator(ppt_dir)
-    out = gen.generate({"title": "Eval", "sections": {
-        "overview": "A test paper overview.", "methodology": "A method.",
-        "experiments": "Experiments show improvement.", "conclusion": "Conclusion."}})
-    ck("pptx-generated with figure/table", Path(out).exists() and len(gen.prs.slides) >= 5,
-       f"slides={len(gen.prs.slides)}")
+    deck = build_fallback_slides({
+        "title": "Eval",
+        "sections": {
+            "overview": "A test paper overview.",
+            "methodology": "A method.",
+            "experiments": "Experiments show improvement.",
+            "conclusion": "Conclusion.",
+        },
+    })
+    out = ppt_dir / "slides.pptx"
+    renderer = SlideDeckRenderer(base_dir=ppt_dir)
+    renderer.render(deck, str(out))
+    ck("pptx-generated with figure/table", out.exists() and len(renderer.prs.slides) >= 5,
+       f"slides={len(renderer.prs.slides)}")
 
     return results
 

@@ -19,7 +19,7 @@ sys.path.insert(0, str(PROJECT / "src"))
 
 EVAL_DIR = PROJECT / "workspace" / "benchmarks"
 PARSED_DIR = EVAL_DIR / "parsed"
-GOLDEN_DIR = EVAL_DIR / "golden"
+GOLDEN_DIR = PROJECT / "测评" / "results" / "golden"
 OUT_DIR = PROJECT / "workspace" / "benchmarks"
 
 # 让 Agent 运行时的 workspace 落到可写目录，避免污染桌面项目。

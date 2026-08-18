@@ -14,12 +14,13 @@ from paperwise.core.types import (
 from paperwise.core.llm_client import LLMClient, LLMResponse, StreamEvent
 from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
+from paperwise.core.agent_loop import AgentLoopMixin
 from paperwise.harness.harness import Harness
 from paperwise.harness.constraints import ConstraintViolation
 from paperwise.tools.registry import ToolRegistry
 
 
-class Agent:
+class Agent(AgentLoopMixin):
     """Enhanced Agent -- ReAct loop + Budget-Aware + explicit Plan-Execute-Verify."""
 
     def __init__(
@@ -181,168 +182,15 @@ class Agent:
 
     # === Exit conditions ===
 
-    def _check_exit(self) -> Optional[str]:
-        """Check hard limits, stagnation, and plan completion."""
-        s = self.state
 
-        if s.current_step >= s.max_steps:
-            return f"max_steps ({s.max_steps})"
-
-        if s.tokens_used > s.token_limit:
-            return f"token_budget ({s.tokens_used}/{s.token_limit})"
-
-        if self.harness.is_circuit_open():
-            return f"circuit_breaker ({self.harness.consecutive_errors} errors)"
-
-        elapsed = time.time() - self._start_time
-        if elapsed > self._time_budget:
-            return f"time_budget ({elapsed:.0f}s)"
-
-        if self.harness.consecutive_errors >= 5:
-            return f"consecutive_errors ({self.harness.consecutive_errors})"
-
-        stagnation = self._detect_stagnation(window=4)
-        if stagnation:
-            return f"stagnation: {stagnation}"
-
-        if self._plan.tasks and self._plan.done and len(self._plan.tasks) > 1 and s.current_step > 0:
-            return "plan_completed"
-
-        return None
-
-    def _detect_stagnation(self, window: int = 4) -> Optional[str]:
-        """Detect repeated identical tool calls over a window."""
-        msgs = self.state.messages
-        if len(msgs) < window * 2:
-            return None
-        recent = msgs[-window * 2:]
-        tool_calls = []
-        for m in recent:
-            if m.role == Role.ASSISTANT and m.tool_calls:
-                tool_calls.extend([
-                    (tc.name, json.dumps(tc.arguments, sort_keys=True))
-                    for tc in m.tool_calls
-                ])
-        if len(tool_calls) >= window and len(set(tool_calls[-window:])) == 1:
-            name, _ = tool_calls[-1]
-            return f"repeated {name} calls"
-        return None
 
     # === Budget-Aware guidance ===
 
-    def _budget_note(self) -> Optional[str]:
-        """Graduated budget guidance based on remaining steps/tokens and plan."""
-        s = self.state
-        steps_ratio = s.current_step / max(s.max_steps, 1)
-        tokens_ratio = s.tokens_used / max(s.token_limit, 1)
-        usage = max(steps_ratio, tokens_ratio)
-
-        plan_hint = ""
-        if self._plan.tasks and not self._plan.done:
-            done, total = self._plan.progress
-            plan_hint = f" Plan progress: {done}/{total} tasks done."
-
-        if usage > 0.9:
-            return (
-                "<budget_alert>CRITICAL: Budget almost exhausted "
-                f"({s.current_step}/{s.max_steps} steps, {s.tokens_used}/{s.token_limit} tokens).{plan_hint} "
-                "Stop exploring. Synthesize what you have. Write the final report NOW. "
-                "Do NOT start new searches or deep analyses.</budget_alert>"
-            )
-        elif usage > 0.7:
-            return (
-                "<budget_note>High budget usage. "
-                f"{plan_hint} Focus on the most important remaining sections. "
-                "Skip non-essential details.</budget_note>"
-            )
-        elif usage > 0.5:
-            return (
-                "<budget_note>Half of budget used. "
-                f"{plan_hint} Prioritize tasks on the critical path.</budget_note>"
-            )
-        elif usage > 0.25:
-            return (
-                "<budget_note>Budget being consumed steadily. "
-                f"{plan_hint} Avoid redundant tool calls.</budget_note>"
-            )
-        return None
 
     # === Early termination verification ===
 
-    async def _verify_completion(self) -> bool:
-        """Verify outputs exist and optionally run a judge review."""
-        checks = []
 
-        report_path = self.workspace / "report" / "report.md"
-        checks.append(("Report file", report_path.exists()))
 
-        if report_path.exists():
-            size = len(report_path.read_text(encoding="utf-8"))
-            checks.append((f"Report size ({size} chars)", size > 500))
-
-        analysis_dir = self.workspace / "analysis"
-        checks.append(("Analysis directory", analysis_dir.exists()))
-
-        passed = sum(1 for _, ok in checks if ok)
-        total = len(checks)
-        self._emit("verify", f"Completion check: {passed}/{total} passed")
-
-        if passed < total * 0.6:
-            return False
-
-        judge_ok = await self._judge_review()
-        if not judge_ok:
-            self._emit("verify", "Judge review failed; continuing to improve")
-            return False
-
-        return True
-
-    async def _judge_review(self) -> bool:
-        """Run a cheap judge review if a judge model is configured."""
-        from paperwise.config.settings import get_settings
-        settings = get_settings()
-        judge_model = getattr(settings, "judge_model", None)
-        judge_provider = getattr(settings, "judge_provider", None)
-        judge_key = getattr(settings, "judge_api_key", None)
-        if not judge_model or not judge_provider or not judge_key:
-            return True
-        try:
-            from paperwise.core.llm_client import LLMClient
-            judge = LLMClient(provider=judge_provider, model=judge_model, api_key=judge_key)
-            report_path = self.workspace / "report" / "report.md"
-            report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
-            task = self.state.task_description or self.config.name
-            prompt = (
-                f"Review whether the following report satisfies the task: {task}\n\n"
-                f"Report (first 2000 chars):\n{report[:2000]}\n\n"
-                "Reply with a single JSON object: {\"passed\": true/false, \"feedback\": \"...\"}"
-            )
-            resp = await judge.chat(
-                [{"role": "user", "content": prompt}], temperature=0.1, max_tokens=300
-            )
-            content = (resp.content or "").strip()
-            match = re.search(r"\{.*?\}", content, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-                if not data.get("passed", True):
-                    self.state.messages.append(Message(
-                        role=Role.USER,
-                        content=f"<judge_feedback>{data.get('feedback', 'Improve the report.')}</judge_feedback>"
-                    ))
-                return bool(data.get("passed", True))
-        except Exception as e:
-            self._emit("warn", f"Judge review skipped: {e}")
-        return True
-
-    def _looks_complete(self, text: str) -> bool:
-        """Check whether the text looks like a final answer."""
-        complete_markers = [
-            "report has been generated", "report is complete",
-            "final answer", "task complete", "all sections",
-            "analysis complete",
-        ]
-        text_lower = text.lower()
-        return any(m.lower() in text_lower for m in complete_markers)
     # === LLM call ===
 
     async def _call_llm_with_retry(self, attempt: int = 1) -> LLMResponse:
@@ -460,29 +308,6 @@ class Agent:
                 output=f"[Error] {type(e).__name__}: {e}", is_error=True,
             )
 
-    def _update_plan_from_tool_call(self, tool_call: ToolCall, result: ToolResult) -> None:
-        """Mark plan tasks done based on observed tool execution."""
-        plan = self._plan
-        if not plan.tasks:
-            return
-
-        name = tool_call.name
-        args = tool_call.arguments
-        path = str(args.get("path", "")).lower()
-
-        if name == "read_file" and "text.md" in path and not result.is_error:
-            plan.mark_done("read_paper", evidence=path)
-        elif name == "write_file":
-            if path.endswith("report.md"):
-                plan.mark_done("generate_report", evidence=path)
-            if "analysis/plan.md" in path:
-                plan.mark_in_progress("analyze_method")
-        elif name == "code_interpreter" and not result.is_error:
-            plan.mark_done("verify_data", evidence="code executed")
-        elif name == "generate_pptx" and not result.is_error:
-            plan.mark_done("generate_pptx", evidence=path)
-
-        self.state.todo_items = plan.to_todo_items()
 
     # === Message construction ===
 
