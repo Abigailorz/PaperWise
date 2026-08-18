@@ -31,8 +31,10 @@ QUESTIONS = [
      ["87.2"]),
     ("test_paper_simple", "What is the claimed average accuracy from Table 1?",
      ["83.7"]),
-    ("test_paper_cv", "What is the main task addressed in this paper?",
-     ["Gaussian Splatting", "3D"]),
+    ("test_paper_cv", "What is the main contribution of SegNet-Lite?",
+     ["SegNet-Lite", "depthwise separable", "Light Decoder", "real-time"]),
+    ("test_paper_cv", "What mIoU and FPS does SegNet-Lite achieve on Cityscapes?",
+     ["78.3", "42.1"]),
 ]
 
 
