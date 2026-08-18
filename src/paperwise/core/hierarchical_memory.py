@@ -167,6 +167,93 @@ class HierarchicalMemory:
         except Exception:
             return ""
 
+
+    async def a_call_llm(self, prompt: str, max_tokens: int) -> str:
+        """Async-friendly LLM call for compression."""
+        try:
+            resp = await self.llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=max_tokens,
+            )
+            return resp.content.strip() if resp.content else ""
+        except Exception:
+            return ""
+
+    async def amaybe_compress(self, token_limit: int, token_used: int) -> bool:
+        """Async version of maybe_compress."""
+        soft_limit = int(token_limit * 0.75)
+        hard_limit = int(token_limit * 0.9)
+
+        compressed = False
+        if token_used > hard_limit:
+            compressed = await self.acompress_one_level() or compressed
+            compressed = await self.acompress_one_level() or compressed
+        elif token_used > soft_limit:
+            compressed = await self.acompress_one_level() or compressed
+        return compressed
+
+    async def acompress_one_level(self) -> bool:
+        """Async single-level compression."""
+        if self._recent_chars > self.max_recent_chars:
+            return await self.asummarize_recent_to_working()
+        if self._working_chars > self.max_working_chars:
+            return await self.asummarize_working_to_long_term()
+        if self._long_term_chars > self.max_long_term_chars:
+            self.long_term_summary = self._truncate(self.long_term_summary, self.max_long_term_chars)
+            return True
+        return False
+
+    async def asummarize_recent_to_working(self) -> bool:
+        """Async: summarize old recent turns into working memory, keep newest K turns."""
+        if not self.llm:
+            keep = self.recent_turns[-4:] if len(self.recent_turns) > 4 else self.recent_turns
+            drop = self.recent_turns[:-4] if len(self.recent_turns) > 4 else []
+            self.recent_turns = keep
+            self.working_summary = self._format_turns(drop)[:self.max_working_chars]
+            return len(drop) > 0
+
+        keep_count = max(3, len(self.recent_turns) // 3)
+        drop = self.recent_turns[:-keep_count]
+        keep = self.recent_turns[-keep_count:]
+
+        prompt = (
+            "Summarize the following conversation turns into a concise working memory. "
+            "Keep: current task, key decisions, failures and corrections, next steps. "
+            "Discard narration and redundant tool output.\n\n" +
+            self._format_turns(drop) + "\n\nSummary:"
+        )
+        try:
+            summary = await self.a_call_llm(prompt, max_tokens=800)
+            if summary:
+                self.working_summary = summary[:self.max_working_chars]
+                self.recent_turns = keep
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def asummarize_working_to_long_term(self) -> bool:
+        """Async: fold working memory into long-term memory."""
+        if not self.llm:
+            self.long_term_summary = self._truncate(self.working_summary, self.max_long_term_chars)
+            self.working_summary = ""
+            return True
+
+        prompt = (
+            "Compress the following working memory into a compact long-term memory. "
+            "Keep only project-level facts, user preferences, and overarching conclusions.\n\n" +
+            self.working_summary + "\n\nLong-term memory:"
+        )
+        try:
+            summary = await self.a_call_llm(prompt, max_tokens=400)
+            if summary:
+                self.long_term_summary = summary[:self.max_long_term_chars]
+                self.working_summary = ""
+                return True
+        except Exception:
+            pass
+        return False
     def _format_turns(self, turns: list[Message]) -> str:
         lines = []
         for m in turns:

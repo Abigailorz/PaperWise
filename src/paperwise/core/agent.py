@@ -94,7 +94,7 @@ class Agent:
                     self._memory.add_turn(budget_msg)
 
                 # === Optional hierarchical memory compression before LLM ===
-                self._maybe_compress_memory()
+                await self._maybe_compress_memory()
 
                 # === Call LLM (streaming) ===
                 response = await self._call_llm_with_retry()
@@ -511,10 +511,10 @@ class Agent:
             plan_text=plan_text,
         )
 
-    def _maybe_compress_memory(self) -> None:
+    async def _maybe_compress_memory(self) -> None:
         """Compress context before an LLM call if needed."""
         try:
-            compressed = self._memory.maybe_compress(
+            compressed = await self._memory.amaybe_compress(
                 self.state.token_limit, self.state.tokens_used
             )
             if compressed:
