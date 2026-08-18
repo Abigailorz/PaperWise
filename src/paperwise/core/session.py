@@ -388,14 +388,6 @@ class AgentSession:
         if stagnation:
             return f"stagnation: {stagnation}"
 
-        if (
-            self._plan.tasks
-            and self._plan.done
-            and len(self._plan.tasks) > 1
-            and self._total_steps > 0
-        ):
-            return "plan_completed"
-
         return None
 
     def _detect_stagnation(self, window: int = 4) -> Optional[str]:
@@ -789,7 +781,7 @@ class AgentSession:
         if name == "read_file" and "text.md" in path and not result.is_error:
             plan.mark_done("read_paper", evidence=path)
         elif name == "write_file":
-            if "report" in path:
+            if path.endswith("report.md"):
                 plan.mark_done("generate_report", evidence=path)
             if "analysis/plan.md" in path:
                 plan.mark_in_progress("analyze_method")

@@ -473,7 +473,7 @@ class Agent:
         if name == "read_file" and "text.md" in path and not result.is_error:
             plan.mark_done("read_paper", evidence=path)
         elif name == "write_file":
-            if "report" in path:
+            if path.endswith("report.md"):
                 plan.mark_done("generate_report", evidence=path)
             if "analysis/plan.md" in path:
                 plan.mark_in_progress("analyze_method")
