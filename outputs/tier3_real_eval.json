@@ -1,0 +1,195 @@
+{
+  "generated_at": "2026-08-18 23:11:19",
+  "part_a": null,
+  "part_b": {
+    "papers": [
+      {
+        "paper_id": "feature3dgs_2312.03203",
+        "title": "Feature 3DGS: Supercharging 3D Gaussian Splatting to Enable Distilled Feature Fields",
+        "model": "qwen-plus",
+        "k": 1,
+        "total_runs": 6,
+        "passed": 5,
+        "success_rate": 0.8333,
+        "pass_at_k": 0.8333,
+        "pass_consecutive_k": 0.8333,
+        "avg_steps": 11.2,
+        "avg_duration": 76.7,
+        "avg_legal_rate": 0.3415,
+        "avg_tokens": 1659,
+        "per_scenario": {
+          "basic_info_extraction": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 6.0,
+            "avg_duration": 46.7,
+            "avg_legal_rate": 0.5,
+            "avg_rubric": 0.0
+          },
+          "critical_analysis": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 5.0,
+            "avg_duration": 20.6,
+            "avg_legal_rate": 0.0,
+            "avg_rubric": 2.71
+          },
+          "hallucination_veto": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 5.0,
+            "avg_duration": 22.0,
+            "avg_legal_rate": 0.6,
+            "avg_rubric": 0.0
+          },
+          "method_verification": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 5.0,
+            "avg_duration": 25.2,
+            "avg_legal_rate": 0.0,
+            "avg_rubric": 0.0
+          },
+          "numerical_fact_verification": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 5.0,
+            "avg_duration": 19.0,
+            "avg_legal_rate": 0.0,
+            "avg_rubric": 0.0
+          },
+          "report_generation": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 41.0,
+            "avg_duration": 326.9,
+            "avg_legal_rate": 0.9487,
+            "avg_rubric": 4.0
+          }
+        },
+        "runs": [
+          {
+            "name": "basic_info_extraction",
+            "passed": true,
+            "score": 1.0,
+            "steps": 6,
+            "duration": 46.7,
+            "tokens": 1285,
+            "legal_rate": 0.5,
+            "rubric": 0.0,
+            "hallucination": "minor",
+            "errors": [],
+            "details": [
+              "content 4/4",
+              "tools 1/2",
+              "no-critical-hallucination"
+            ]
+          },
+          {
+            "name": "numerical_fact_verification",
+            "passed": true,
+            "score": 1.0,
+            "steps": 5,
+            "duration": 19.0,
+            "tokens": 185,
+            "legal_rate": 0.0,
+            "rubric": 0.0,
+            "hallucination": "major",
+            "errors": [],
+            "details": [
+              "content 2/2",
+              "tools 1/2",
+              "no-critical-hallucination"
+            ]
+          },
+          {
+            "name": "method_verification",
+            "passed": true,
+            "score": 1.0,
+            "steps": 5,
+            "duration": 25.2,
+            "tokens": 193,
+            "legal_rate": 0.0,
+            "rubric": 0.0,
+            "hallucination": "major",
+            "errors": [],
+            "details": [
+              "content 4/4",
+              "tools 1/2",
+              "no-critical-hallucination"
+            ]
+          },
+          {
+            "name": "critical_analysis",
+            "passed": true,
+            "score": 1.0,
+            "steps": 5,
+            "duration": 20.6,
+            "tokens": 138,
+            "legal_rate": 0.0,
+            "rubric": 2.71,
+            "hallucination": "major",
+            "errors": [],
+            "details": [
+              "content 2/2",
+              "tools 1/2",
+              "no-critical-hallucination",
+              "rubric=2.71"
+            ]
+          },
+          {
+            "name": "hallucination_veto",
+            "passed": false,
+            "score": 0.5,
+            "steps": 5,
+            "duration": 22.0,
+            "tokens": 94,
+            "legal_rate": 0.6,
+            "rubric": 0.0,
+            "hallucination": "critical",
+            "errors": [
+              "hallucination:critical"
+            ],
+            "details": [
+              "tools 2/2"
+            ]
+          },
+          {
+            "name": "report_generation",
+            "passed": true,
+            "score": 0.8,
+            "steps": 41,
+            "duration": 326.9,
+            "tokens": 8061,
+            "legal_rate": 0.9487,
+            "rubric": 4.0,
+            "hallucination": "critical",
+            "errors": [
+              "hallucination:critical"
+            ],
+            "details": [
+              "tools 3/3",
+              "file:report/report.md",
+              "report>=500chars",
+              "rubric=4.00"
+            ]
+          }
+        ]
+      }
+    ],
+    "overall_success_rate": 0.8333,
+    "config": "full"
+  }
+}

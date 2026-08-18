@@ -1,0 +1,135 @@
+{
+  "generated_at": "2026-08-18 22:57:30",
+  "part_a": {
+    "total": 25,
+    "passed": 25,
+    "results": [
+      {
+        "name": "cmd-rm -rf blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "cmd-sudo blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "cmd-curl|sh blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "cmd-command-substitution blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "cmd-safe allowed",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "path-traversal blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "path-Windows blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "path-ssh key blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "path-aws creds blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "path-safe allowed",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "injection-ignore detected",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "injection-im_start detected",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "injection-normal allowed",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "leak-api key detected",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "leak-system prompt detected",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "constraint-bash blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "constraint-read traversal blocked",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "constraint-tool limits configured",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "context-L1 truncation",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "context-L2 dedup",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "verify-invalid json",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "verify-valid json",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "memory-cross-session recall",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "reco-topics from memory",
+        "passed": true,
+        "detail": ""
+      },
+      {
+        "name": "pptx-generated with figure/table",
+        "passed": true,
+        "detail": "slides=9"
+      }
+    ]
+  },
+  "part_b": null
+}
