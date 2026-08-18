@@ -46,7 +46,8 @@ def _load_golden(paper_id: str) -> dict:
 
 
 async def run_part_b(paper_id: str, k: int, only_scenario: int,
-                     model: str = "deepseek-chat") -> dict:
+                     model: str = "deepseek-chat",
+                     config_name: str = "full") -> dict:
     golden = _load_golden(paper_id)
     paper_text = (PARSED_DIR / paper_id / "text.md").read_text(encoding="utf-8")
     title = golden.get("title", paper_id)
@@ -58,7 +59,7 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
     all_runs = []
     for sc in scenarios:
         for i in range(k):
-            r = await _run_one(paper_text, title, sc, i, llm, model)
+            r = await _run_one(paper_text, title, sc, i, llm, model, config_name)
             all_runs.append(r)
             print(
                 f"  [{sc['name']} run{i + 1}] {'PASS' if r.passed else 'FAIL'} "
@@ -124,6 +125,8 @@ async def main():
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--scenario", type=int)
     ap.add_argument("--model", default="deepseek-chat")
+    ap.add_argument("--config", default="full",
+                    choices=["full", "no-plan", "no-budget", "no-judge", "no-memory", "baseline"])
     args = ap.parse_args()
 
     report = {
@@ -149,12 +152,13 @@ async def main():
         results = []
         for pid in targets:
             print(f"\n--- paper: {pid} (k={args.k}) ---", flush=True)
-            results.append(await run_part_b(pid, args.k, args.scenario, args.model))
+            results.append(await run_part_b(pid, args.k, args.scenario, args.model, args.config))
         report["part_b"] = {
             "papers": results,
             "overall_success_rate": round(
                 sum(r["passed"] for r in results) / max(1, sum(r["total_runs"] for r in results)), 4
             ),
+            "config": getattr(args, "config", "full"),
         }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

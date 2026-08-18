@@ -77,6 +77,10 @@ class AgentConfig:
     temperature: float = 0.3
     allowed_tools: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    enable_plan: bool = True
+    enable_budget_note: bool = True
+    enable_judge_review: bool = True
+    enable_hierarchical_memory: bool = True
 
 
 @dataclass

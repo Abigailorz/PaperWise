@@ -77,17 +77,14 @@ class AgentLoopMixin:
     def _detect_stagnation(self, window: int = 4) -> Optional[str]:
         """Detect repeated identical tool calls over a window."""
         messages = self.state.messages
-        if len(messages) < window * 2:
-            return None
-        recent = messages[-window * 2:]
         tool_calls = []
-        for m in recent:
+        for m in messages:
             if m.role == Role.ASSISTANT and m.tool_calls:
                 tool_calls.extend([
                     (tc.name, json.dumps(tc.arguments, sort_keys=True))
                     for tc in m.tool_calls
                 ])
-        if len(tool_calls) >= window and len(set(tool_calls[-window:])) == 1:
+        if len(tool_calls) >= window + 1 and len(set(tool_calls[-(window + 1):])) == 1:
             name, _ = tool_calls[-1]
             return f"repeated {name} calls"
         return None
@@ -96,6 +93,9 @@ class AgentLoopMixin:
 
     def _budget_note(self) -> Optional[str]:
         """Graduated budget guidance based on remaining steps/tokens and plan."""
+        cfg = getattr(self, "config", None)
+        if cfg is not None and not getattr(cfg, "enable_budget_note", True):
+            return None
         steps = getattr(self, "_total_steps", getattr(self.state, "current_step", 0))
         max_steps = getattr(self, "_max_steps_per_turn", getattr(self.state, "max_steps", 25))
         tokens_used = getattr(self, "_tokens_used", getattr(self.state, "tokens_used", 0))
@@ -200,6 +200,9 @@ class AgentLoopMixin:
 
     async def _judge_review(self) -> bool:
         """Run a cheap judge review if a judge model is configured."""
+        cfg = getattr(self, "config", None)
+        if cfg is not None and not getattr(cfg, "enable_judge_review", True):
+            return True
         from paperwise.config.settings import get_settings
         settings = get_settings()
         if not settings.judge_api_key_resolved:

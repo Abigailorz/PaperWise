@@ -61,3 +61,13 @@ class HallucinationDetector:
 
 
 __all__ = ["RubricEvaluator", "HallucinationDetector", "RubricDimension", "EvaluationResult"]
+from paperwise.evaluation.graders import (
+    Grader, GradeResult, CodeGrader, RubricGrader,
+    HallucinationGrader, TranscriptMetrics, CompositeGrader,
+)
+
+__all__ = [
+    "RubricEvaluator", "HallucinationDetector", "RubricDimension", "EvaluationResult",
+    "Grader", "GradeResult", "CodeGrader", "RubricGrader",
+    "HallucinationGrader", "TranscriptMetrics", "CompositeGrader",
+]

@@ -21,6 +21,33 @@
 └── scripts/         # 复现脚本
 ```
 
+## 统一入口
+
+新增四级评测统一入口：
+
+```bash
+# 查看支持的 Agent 配置变体
+python 测评/scripts/eval.py --list-configs
+
+# Tier 1：确定性安全/组件测试
+python 测评/scripts/eval.py --tier 1
+
+# Tier 2：Mock-LLM Agent 控制逻辑测试
+python 测评/scripts/eval.py --tier 2
+
+# Tier 3：真实论文能力评测（k=1，config=full）
+python 测评/scripts/eval.py --tier 3 --paper feature3dgs_2312.03203 --k 1
+
+# Tier 4：消融实验
+python 测评/scripts/eval.py --tier 4
+```
+
+实现细节：
+
+- `AgentConfig` 新增 `enable_plan / enable_budget_note / enable_judge_review / enable_hierarchical_memory` 开关，用于 Tier 3/4 的消融配置。
+- `src/paperwise/evaluation/graders.py` 抽象了 `CodeGrader / RubricGrader / HallucinationGrader / TranscriptMetrics / CompositeGrader`。
+- `tests/test_agent_loop.py` 使用 `MockLLMClient` 对预算提示、stagnation、plan ablation、session 上下文等做确定性验证。
+
 ## 一句话结论
 
 - 测评分为两部分：**Part A（确定性安全/组件测试）** 和 **Part B（真实论文上的 LLM Agent 能力测试）**。

@@ -89,13 +89,16 @@ class Agent(AgentLoopMixin):
 
                 # === Budget-Aware guidance ===
                 budget_note = self._budget_note()
+                if not getattr(self.config, "enable_budget_note", True):
+                    budget_note = None
                 if budget_note:
                     budget_msg = Message(role=Role.USER, content=budget_note)
                     self.state.messages.append(budget_msg)
                     self._memory.add_turn(budget_msg)
 
                 # === Optional hierarchical memory compression before LLM ===
-                await self._maybe_compress_memory()
+                if getattr(self.config, "enable_hierarchical_memory", True):
+                    await self._maybe_compress_memory()
 
                 # === Call LLM (streaming) ===
                 response = await self._call_llm_with_retry()
@@ -313,21 +316,34 @@ class Agent(AgentLoopMixin):
 
     def _init_messages(self, task: str) -> None:
         """Build initial context using explicit plan and hierarchical memory."""
-        self._plan = Plan.from_task_text(task)
-        self.state.todo_items = self._plan.to_todo_items()
         self._memory = HierarchicalMemory(self.workspace, llm_client=self.llm)
 
-        plan_text = self._plan.to_status_text()
-        enhanced_task = (
-            f"<task>\n{task}\n</task>\n\n"
-            f"<instructions>\n"
-            f"1. Follow the explicit plan in <current_plan>; mark tasks done as you finish them\n"
-            f"2. Execute the plan step by step\n"
-            f"3. AFTER each step, verify the output exists before moving on\n"
-            f"4. When ALL plan tasks are done, produce the final report\n"
-            f"5. DO NOT claim completion until all output files exist\n"
-            f"</instructions>\n"
-        )
+        if getattr(self.config, "enable_plan", True):
+            self._plan = Plan.from_task_text(task)
+            self.state.todo_items = self._plan.to_todo_items()
+            plan_text = self._plan.to_status_text()
+            enhanced_task = (
+                f"<task>\n{task}\n</task>\n\n"
+                f"<instructions>\n"
+                f"1. Follow the explicit plan in <current_plan>; mark tasks done as you finish them\n"
+                f"2. Execute the plan step by step\n"
+                f"3. AFTER each step, verify the output exists before moving on\n"
+                f"4. When ALL plan tasks are done, produce the final report\n"
+                f"5. DO NOT claim completion until all output files exist\n"
+                f"</instructions>\n"
+            )
+        else:
+            self._plan = Plan()
+            self.state.todo_items = []
+            plan_text = ""
+            enhanced_task = (
+                f"<task>\n{task}\n</task>\n\n"
+                f"<instructions>\n"
+                f"1. Reason step by step to complete the task\n"
+                f"2. Use available tools when needed\n"
+                f"3. Verify any output files exist before claiming completion\n"
+                f"</instructions>\n"
+            )
 
         self.state.messages = self._memory.build_initial_context(
             system_prompt=self.config.system_prompt,
