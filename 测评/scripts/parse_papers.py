@@ -15,6 +15,9 @@ PAPERS = {
     "langsplat_2312.16084": "langsplat_2312.16084.pdf",
     "feature3dgs_2312.03203": "feature3dgs_2312.03203.pdf",
     "gaussaingrouping_2312.00732": "gaussaingrouping_2312.00732.pdf",
+    # Additional semantic 3DGS papers for dataset expansion
+    "mipsplatting_2311.16493": "mipsplatting_2311.16493.pdf",
+    "gaussianeditor_2311.14521": "gaussianeditor_2311.14521.pdf",
 }
 
 

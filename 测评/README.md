@@ -48,6 +48,27 @@ python 测评/scripts/eval.py --tier 4
 - `src/paperwise/evaluation/graders.py` 抽象了 `CodeGrader / RubricGrader / HallucinationGrader / TranscriptMetrics / CompositeGrader`。
 - `tests/test_agent_loop.py` 使用 `MockLLMClient` 对预算提示、stagnation、plan ablation、session 上下文等做确定性验证。
 
+
+
+## 高级评测脚本
+
+除了 `eval.py` 四级入口，还有以下高级脚本：
+
+```bash
+# 完整 Ablation 对比（包含统计显著性分析）
+python 测评/scripts/run_ablation_study.py --paper all --k 3
+
+# 模型替换实验（区分模型 vs Harness 瓶颈）
+python 测评/scripts/run_model_swap.py --paper all --k 3     --models deepseek-v4-flash claude-sonnet-4-20250514 gpt-4o
+```
+
+## 实现细节补充
+
+- `src/paperwise/evaluation/stats.py` 提供标准误、置信区间、显著性检验、配对 bootstrap 等统计分析工具。
+- `测评/scripts/run_ablation_study.py` 在 3 篇论文上跑全部 ablation 配置并生成对比报告。
+- `测评/scripts/run_model_swap.py` 在固定 Harness 的情况下更换多个模型，用于定位瓶颈是模型还是 Harness。
+- `测评/scripts/download_papers.py` 和 `parse_papers.py` 已扩展支持 5 篇语义 3DGS 相关论文。
+
 ## 一句话结论
 
 - 测评分为两部分：**Part A（确定性安全/组件测试）** 和 **Part B（真实论文上的 LLM Agent 能力测试）**。

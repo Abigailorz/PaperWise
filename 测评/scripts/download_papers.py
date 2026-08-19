@@ -9,6 +9,9 @@ PAPERS = {
     "langsplat_2312.16084": "2312.16084",
     "feature3dgs_2312.03203": "2312.03203",
     "gaussaingrouping_2312.00732": "2312.00732",
+    # Additional semantic 3DGS papers for dataset expansion
+    "mipsplatting_2311.16493": "2311.16493",
+    "gaussianeditor_2311.14521": "2311.14521",
 }
 DEST = PROJECT / "tests" / "test_data" / "real_papers"
 

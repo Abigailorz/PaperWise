@@ -1,0 +1,63 @@
+{
+  "title": "Mip-Splatting: Alias-free 3D Gaussian Splatting",
+  "arxiv_id": "2311.16493",
+  "note": "This golden dataset is auto-generated and needs human review/validation.",
+  "agent_test_scenarios": [
+    {
+      "name": "basic_info_extraction",
+      "level": 1,
+      "task": "What is the main contribution of Mip-Splatting? Answer concisely with evidence.",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["alias-free", "Mip-Splatting", "3D Gaussian Splatting"],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "method_verification",
+      "level": 2,
+      "task": "How does Mip-Splatting address the anti-aliasing problem in 3D Gaussian Splatting? Explain the technical approach.",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["anti-aliasing", "Mip", "filter"],
+      "max_steps": 8,
+      "timeout": 180
+    },
+    {
+      "name": "numerical_fact_verification",
+      "level": 1,
+      "task": "What improvements does Mip-Splatting report over the baseline 3DGS? Give exact numbers if mentioned.",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": [],
+      "max_steps": 6,
+      "timeout": 120
+    },
+    {
+      "name": "critical_analysis",
+      "level": 2,
+      "task": "What are the stated limitations of Mip-Splatting, and can you identify any additional unstated limitations?",
+      "expected_tools": ["read_file", "grep"],
+      "expected_answer_contains": ["limitation"],
+      "max_steps": 10,
+      "timeout": 180
+    },
+    {
+      "name": "hallucination_veto",
+      "level": 1,
+      "task": "What COCO object detection mAP does this paper report? Answer precisely.",
+      "expected_tools": ["grep", "read_file"],
+      "expected_answer_contains": [],
+      "forbid_fabrication": true,
+      "max_steps": 5,
+      "timeout": 120
+    },
+    {
+      "name": "report_generation",
+      "level": 3,
+      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble report/report.md.",
+      "expected_tools": ["write_file", "read_file", "grep"],
+      "min_output_files": ["report/report.md"],
+      "min_report_chars": 500,
+      "max_steps": 30,
+      "timeout": 420
+    }
+  ]
+}

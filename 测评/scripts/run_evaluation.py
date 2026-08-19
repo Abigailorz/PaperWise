@@ -28,6 +28,10 @@ from paperwise.harness.harness import Harness
 from paperwise.harness.constraints import ConstraintEngine, ConstraintViolation
 from paperwise.evaluation import RubricEvaluator, HallucinationDetector
 from paperwise.evaluation.configs import apply_config
+from paperwise.evaluation.graders import (
+    CodeGrader, RubricGrader, HallucinationGrader,
+    TranscriptMetrics, CompositeGrader, GradeResult, Grader,
+)
 
 TEST_DATA = PROJECT / "tests" / "test_data"
 PAPERS = {
@@ -150,6 +154,7 @@ class ScenarioResult:
     hallucination: dict = field(default_factory=dict)
     details: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    trace: dict = field(default_factory=dict)
 
 
 AGENT_SCENARIOS = [
@@ -235,6 +240,21 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     res.tool_stats = dict(ar.tool_stats)
     res.tokens_used = agent.state.tokens_used
 
+    # Basic observability trace: tool call sequence, message role counts, token distribution
+    tool_sequence = []
+    role_counts = {"system": 0, "user": 0, "assistant": 0, "tool": 0}
+    for m in agent.state.messages:
+        role_counts[m.role.value] = role_counts.get(m.role.value, 0) + 1
+        if m.role.value == "assistant" and m.tool_calls:
+            for tc in m.tool_calls:
+                tool_sequence.append({"tool": tc.name, "args": tc.arguments})
+    res.trace = {
+        "tool_sequence": tool_sequence[:50],  # cap at 50 entries
+        "role_counts": role_counts,
+        "total_messages": len(agent.state.messages),
+        "config": config_name,
+    }
+
     total_tool = bad_tool = 0
     for m in agent.state.messages:
         if m.role.value == "tool" and m.content:
@@ -246,22 +266,58 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     final = ar.final_output or ""
     all_content = final + "\n" + _collect_text(workspace)
 
-    exp = sc.get("expected_answer_contains", [])
-    missing = [c for c in exp if c.lower() not in all_content.lower()]
-    if exp:
-        res.details.append(f"content {len(exp)-len(missing)}/{len(exp)}")
-        if missing:
-            res.errors.append(f"missing:{missing}")
+    # === Integrated grading using CompositeGrader ===
+    judge_llm = get_settings().build_judge_llm()
 
-    exp_tools = set(sc.get("expected_tools", []))
-    actual_tools = set(ar.tool_stats.keys())
-    if exp_tools:
-        hit = exp_tools & actual_tools
-        res.details.append(f"tools {len(hit)}/{len(exp_tools)}")
-        if len(hit) < max(1, len(exp_tools) * 0.5):
-            res.errors.append(f"tools expected {exp_tools} got {sorted(actual_tools)}")
+    code_grader = CodeGrader(
+        expected_keywords=sc.get("expected_answer_contains", []),
+        expected_tools=sc.get("expected_tools", []),
+        required_files=sc.get("min_output_files", []),
+        min_output_chars=sc.get("min_report_chars", 0),
+    )
 
-    # 确定性兜底：Agent 若没写出合格 report.md，用已写章节自动拼装
+    hallucination_grader = HallucinationGrader(judge_llm)
+    transcript_metrics = TranscriptMetrics()
+
+    graders: list[tuple[Grader, float]] = [
+        (code_grader, 0.45),
+        (transcript_metrics, 0.25),
+        (hallucination_grader, 0.30),  # hallucination is a veto; any fail fails the task
+    ]
+
+    if sc["name"] in ("critical_analysis", "report_generation"):
+        rubric_grader = RubricGrader(judge_llm)
+        graders.insert(1, (rubric_grader, 0.30))
+        weights = [w for _, w in graders]
+        total_w = sum(weights)
+        graders = [(g, w / total_w) for g, w in graders]
+
+    composite = CompositeGrader(graders)
+
+    context = {
+        "agent_result": ar,
+        "paper_text": paper_text,
+        "workspace": workspace,
+        "scenario": sc,
+    }
+
+    grade_result: GradeResult = await composite.grade(all_content, context)
+
+    res.score = grade_result.score
+    res.passed = grade_result.passed
+    res.details = grade_result.details
+    res.errors = grade_result.errors
+    res.hallucination = grade_result.raw.get("HallucinationGrader", {})
+    res.rubric = grade_result.raw.get("RubricGrader", {}).get("overall_score", 0.0)
+
+    # Hallucination veto: if hallucination failed, force fail regardless of score
+    hall_raw = grade_result.raw.get("HallucinationGrader", {})
+    if hall_raw.get("severity") in ("critical", "major", "error"):
+        res.passed = False
+        if not any("hallucination" in e for e in res.errors):
+            res.errors.append(f"hallucination:{hall_raw.get('severity')}")
+
+    # Deterministic fallback: if agent didn't write a valid report, assemble sections
     try:
         from paperwise.generators.report import ReportGenerator
         _rp = paper_dir / "report" / "report.md"
@@ -272,38 +328,6 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     except Exception:
         pass
 
-    for f in sc.get("min_output_files", []):
-        if (paper_dir / f).exists():
-            res.details.append(f"file:{f}")
-        else:
-            res.errors.append(f"missing file:{f}")
-
-    rp = paper_dir / "report" / "report.md"
-    mc = sc.get("min_report_chars", 0)
-    if mc and rp.exists() and len(rp.read_text(encoding="utf-8", errors="replace")) >= mc:
-        res.details.append("report>=500chars")
-    elif mc:
-        res.errors.append("report too short/missing")
-
-    # 异源 Judge：评估/幻觉检测用独立模型，避免与主模型同源“包庇”
-    judge_llm = get_settings().build_judge_llm()
-    detector = HallucinationDetector(judge_llm)
-    hall = await detector.detect(final[:12000], paper_text[:25000])
-    res.hallucination = {"severity": hall.get("severity"), "summary": hall.get("summary", "")[:200]}
-    if hall.get("passed"):
-        res.details.append("no-critical-hallucination")
-    else:
-        res.errors.append(f"hallucination:{hall.get('severity')}")
-
-    if sc["name"] in ("critical_analysis", "report_generation"):
-        rb = await RubricEvaluator(judge_llm).evaluate(final[:15000], paper_text[:20000])
-        res.rubric = rb.overall_score
-        res.details.append(f"rubric={rb.overall_score:.2f}")
-
-    total_checks = len(res.details) + len(res.errors)
-    res.score = len(res.details) / total_checks if total_checks else 0.0
-    res.passed = res.score >= 0.6
-    return res
 
 
 async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name: str = "full"):
@@ -355,7 +379,8 @@ async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name
                   "steps": r.steps, "duration": round(r.duration, 1),
                   "tokens": r.tokens_used, "legal_rate": round(r.legal_rate, 4),
                   "rubric": r.rubric, "hallucination": r.hallucination.get("severity"),
-                  "errors": r.errors[:4], "details": r.details[:4]} for r in all_runs]}
+                  "errors": r.errors[:4], "details": r.details[:4],
+                  "trace": r.trace} for r in all_runs]}
 
 
 async def main():

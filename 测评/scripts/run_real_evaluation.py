@@ -38,6 +38,9 @@ PAPERS = {
     "langsplat_2312.16084": "golden_langsplat_2312.16084.json",
     "feature3dgs_2312.03203": "golden_feature3dgs_2312.03203.json",
     "gaussaingrouping_2312.00732": "golden_gaussaingrouping_2312.00732.json",
+    # Additional semantic 3DGS papers for dataset expansion
+    "mipsplatting_2311.16493": "golden_mipsplatting_2311.16493.json",
+    "gaussianeditor_2311.14521": "golden_gaussianeditor_2311.14521.json",
 }
 
 
@@ -111,6 +114,7 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
                 "tokens": r.tokens_used, "legal_rate": round(r.legal_rate, 4),
                 "rubric": r.rubric, "hallucination": r.hallucination.get("severity"),
                 "errors": r.errors[:4], "details": r.details[:4],
+                "trace": r.trace,
             }
             for r in all_runs
         ],
