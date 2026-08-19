@@ -330,6 +330,9 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
 
 
 
+    return res
+
+
 async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name: str = "full"):
     text_path, truth_path = PAPERS[paper]
     paper_text = text_path.read_text(encoding="utf-8")

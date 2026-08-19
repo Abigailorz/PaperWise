@@ -1,6 +1,7 @@
 """评估体系"""
 
 import json
+import re
 from pathlib import Path
 from paperwise.core.llm_client import LLMClient
 
@@ -53,7 +54,17 @@ class HallucinationDetector:
         prompt = f"Detect hallucinations in this report. Paper (ground truth):\n{paper_text[:25000]}\n\nReport:\n{report[:15000]}\n\nIdentify fabricated claims (numerical, methodological, finding). Respond JSON: {{\"hallucinations\":[{{\"claim\":\"...\",\"reason\":\"...\",\"severity\":\"critical|major|minor\"}}],\"overall_severity\":\"none|minor|major|critical\",\"summary\":\"...\"}}"
         try:
             resp = await self.llm.chat(messages=[{"role":"user","content":prompt}], temperature=0.1)
-            result = json.loads(resp.content)
+            # Robust JSON extraction: the model may return markdown-wrapped JSON
+            content = (resp.content or "").strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+                content = content.strip()
+            match = re.search(r"\{.*\}", content, re.DOTALL)
+            if match:
+                content = match.group(0)
+            result = json.loads(content)
             sev = result.get("overall_severity","none")
             return {"passed":sev not in ("critical",),"flagged":result.get("hallucinations",[]),"severity":sev,"summary":result.get("summary","")}
         except Exception as e:

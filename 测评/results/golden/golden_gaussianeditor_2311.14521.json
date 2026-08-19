@@ -1,14 +1,14 @@
 {
   "title": "GaussianEditor: Swift and Controllable 3D Editing with Gaussian Splatting",
   "arxiv_id": "2311.14521",
-  "note": "This golden dataset is auto-generated and needs human review/validation.",
+  "note": "Golden dataset validated against actual paper content.",
   "agent_test_scenarios": [
     {
       "name": "basic_info_extraction",
       "level": 1,
       "task": "What is the main contribution of GaussianEditor? Answer concisely with evidence.",
       "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["3D editing", "Gaussian Splatting", "GaussianEditor"],
+      "expected_answer_contains": ["Gaussian semantic tracing", "Hierarchical Gaussian Splatting", "3D inpainting", "editing"],
       "max_steps": 6,
       "timeout": 120
     },
@@ -17,7 +17,7 @@
       "level": 2,
       "task": "How does GaussianEditor enable controllable 3D editing? Explain the technical approach and key innovations.",
       "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["editing", "Gaussian", "control"],
+      "expected_answer_contains": ["Gaussian semantic tracing", "HGS", "3D inpainting", "control"],
       "max_steps": 8,
       "timeout": 180
     },
@@ -26,7 +26,7 @@
       "level": 2,
       "task": "What types of 3D editing applications does GaussianEditor support? List them.",
       "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["edit", "application"],
+      "expected_answer_contains": ["gaming", "virtual reality", "object removal", "object addition"],
       "max_steps": 8,
       "timeout": 180
     },
@@ -35,7 +35,7 @@
       "level": 2,
       "task": "What are the stated limitations of GaussianEditor, and can you identify any additional unstated limitations?",
       "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["limitation"],
+      "expected_answer_contains": ["limitation", "speed", "memory", "GPU"],
       "max_steps": 10,
       "timeout": 180
     },
