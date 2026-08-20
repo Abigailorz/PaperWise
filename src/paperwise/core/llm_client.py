@@ -67,6 +67,12 @@ class LLMClient:
                 trust_env=False,
             ),
         )
+    def _effective_temperature(self, temperature: float) -> float:
+        """Kimi Coding series only allows temperature=1, override to avoid 400."""
+        if self.provider == "moonshot" and self.base_url and "coding" in self.base_url:
+            return 1.0
+        return temperature
+
 
     async def chat(
         self,
@@ -79,7 +85,7 @@ class LLMClient:
         kwargs = dict(
             model=self.model,
             messages=messages,
-            temperature=temperature,
+            temperature=self._effective_temperature(temperature),
             max_tokens=max_tokens,
         )
         if tools:
@@ -100,7 +106,7 @@ class LLMClient:
         kwargs = dict(
             model=self.model,
             messages=messages,
-            temperature=temperature,
+            temperature=self._effective_temperature(temperature),
             max_tokens=max_tokens,
             stream=True,
             stream_options={"include_usage": True},
@@ -172,6 +178,8 @@ class LLMClient:
 
         content = message.content or ""
         reasoning = getattr(message, 'reasoning_content', '') or ""
+        if not content and reasoning:
+            content = reasoning
 
         tool_calls = []
         if message.tool_calls:

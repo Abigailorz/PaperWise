@@ -49,7 +49,7 @@ def _load_golden(paper_id: str) -> dict:
 
 
 async def run_part_b(paper_id: str, k: int, only_scenario: int,
-                     model: str = "deepseek-chat",
+                     model: str = None,
                      config_name: str = "full") -> dict:
     golden = _load_golden(paper_id)
     paper_text = (PARSED_DIR / paper_id / "text.md").read_text(encoding="utf-8")
@@ -58,11 +58,14 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
     if only_scenario is not None:
         scenarios = [scenarios[only_scenario - 1]]
 
-    llm = LLMClient(provider="deepseek", model=model)
+    settings = get_settings()
+    agent_model = model or settings.default_model
+    agent_provider = settings.llm_provider
+    llm = LLMClient(provider=agent_provider, model=agent_model)
     all_runs = []
     for sc in scenarios:
         for i in range(k):
-            r = await _run_one(paper_text, title, sc, i, llm, model, config_name)
+            r = await _run_one(paper_text, title, sc, i, llm, agent_model, config_name)
             all_runs.append(r)
             print(
                 f"  [{sc['name']} run{i + 1}] {'PASS' if r.passed else 'FAIL'} "
@@ -128,7 +131,7 @@ async def main():
     ap.add_argument("--paper", default=None, choices=list(PAPERS))
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--scenario", type=int)
-    ap.add_argument("--model", default="deepseek-chat")
+    ap.add_argument("--model", default=None)
     ap.add_argument("--config", default="full",
                     choices=["full", "no-plan", "no-budget", "no-judge", "no-memory", "baseline"])
     args = ap.parse_args()

@@ -338,7 +338,10 @@ async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name
     paper_text = text_path.read_text(encoding="utf-8")
     truth = json.loads(truth_path.read_text(encoding="utf-8"))
     title = truth.get("title", paper)
-    llm = LLMClient(provider="deepseek", model=model)
+    settings = get_settings()
+    agent_model = model if model != "deepseek-chat" else settings.default_model
+    agent_provider = settings.llm_provider
+    llm = LLMClient(provider=agent_provider, model=agent_model)
     scenarios = AGENT_SCENARIOS if only_scenario is None else [AGENT_SCENARIOS[only_scenario - 1]]
 
     all_runs = []
@@ -393,7 +396,7 @@ async def main():
     ap.add_argument("--paper", default="simple", choices=list(PAPERS))
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--scenario", type=int)
-    ap.add_argument("--model", default="deepseek-chat")
+    ap.add_argument("--model", default=None)
     ap.add_argument("--config", default="full",
                     choices=["full", "no-plan", "no-budget", "no-judge", "no-memory", "baseline"])
     args = ap.parse_args()
