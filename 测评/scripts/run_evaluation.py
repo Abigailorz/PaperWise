@@ -29,7 +29,7 @@ from paperwise.harness.constraints import ConstraintEngine, ConstraintViolation
 from paperwise.evaluation import RubricEvaluator, HallucinationDetector
 from paperwise.evaluation.configs import apply_config
 from paperwise.evaluation.graders import (
-    CodeGrader, RubricGrader, HallucinationGrader,
+    CodeGrader, RubricGrader, HallucinationGrader, CitationGrader,
     TranscriptMetrics, CompositeGrader, GradeResult, Grader,
 )
 
@@ -287,7 +287,9 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
 
     if sc["name"] in ("critical_analysis", "report_generation"):
         rubric_grader = RubricGrader(judge_llm)
-        graders.insert(1, (rubric_grader, 0.30))
+        citation_grader = CitationGrader(required_citations=2)
+        graders.insert(1, (rubric_grader, 0.25))
+        graders.insert(2, (citation_grader, 0.15))
         weights = [w for _, w in graders]
         total_w = sum(weights)
         graders = [(g, w / total_w) for g, w in graders]

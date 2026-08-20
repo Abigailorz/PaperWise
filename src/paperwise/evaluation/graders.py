@@ -247,3 +247,43 @@ class CompositeGrader(Grader):
             errors=errors,
             raw=raw,
         )
+
+
+class CitationGrader(Grader):
+    """Verify that factual claims cite the paper with valid line ranges."""
+
+    def __init__(self, required_citations: int = 1):
+        self.required_citations = required_citations
+
+    async def grade(self, output: str, context: dict[str, Any]) -> GradeResult:
+        workspace = context.get("workspace")
+        paper_path = Path(workspace) / "paper" / "text.md" if workspace else None
+        if not paper_path or not paper_path.exists():
+            return GradeResult(passed=True, details=["paper text not available; citation check skipped"])
+        paper_lines = paper_path.read_text(encoding="utf-8").splitlines()
+        import re
+        pattern = re.compile(r"\[source:\s*text\.md\s+L(\d+)(?:-L?(\d+))?\]", re.IGNORECASE)
+        matches = list(pattern.finditer(output))
+        if len(matches) < self.required_citations:
+            return GradeResult(
+                passed=False,
+                score=0.0,
+                errors=[f"Only {len(matches)} citations found (required {self.required_citations})"],
+            )
+        invalid = []
+        for m in matches:
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else start
+            if start < 1 or end > len(paper_lines) or end < start:
+                invalid.append(f"L{start}-L{end}")
+        if invalid:
+            return GradeResult(
+                passed=False,
+                score=0.0,
+                errors=[f"Invalid citation ranges: {invalid}"],
+            )
+        return GradeResult(
+            passed=True,
+            score=1.0,
+            details=[f"{len(matches)} valid citations"],
+        )

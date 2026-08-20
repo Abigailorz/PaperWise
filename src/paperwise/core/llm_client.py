@@ -210,12 +210,36 @@ class LLMClient:
             usage=usage,
         )
 
-    def count_tokens(self, text: str) -> int:
-        """估算文本 token 数（使用 tiktoken cl100k_base 编码）。"""
+    def count_tokens(self, text: str, model: str = None) -> int:
+        """Estimate token count using the best available tokenizer for the model."""
+        model = model or self.model or "unknown"
         try:
             import tiktoken
-            enc = tiktoken.get_encoding("cl100k_base")
+            try:
+                enc = tiktoken.encoding_for_model(model)
+            except KeyError:
+                enc = tiktoken.get_encoding("cl100k_base")
             return len(enc.encode(text))
         except Exception:
-            # 回退：约 4 字符 = 1 token (英文) 或 1.5 字符 = 1 token (中文)
+            # Fallback: ~2 chars per token for mixed CJK/English
             return len(text) // 2
+
+    def estimate_cost(self, usage: dict) -> float:
+        """Estimate USD cost from usage. Returns 0.0 if pricing unknown."""
+        pricing = {
+            "deepseek-v4-flash": (0.1, 0.2),
+            "deepseek-chat": (0.5, 2.0),
+            "kimi-for-coding": (1.0, 2.0),
+            "kimi-for-coding-highspeed": (1.0, 2.0),
+            "k3": (2.0, 8.0),
+            "k3-256k": (4.0, 12.0),
+            "gpt-4o": (2.5, 10.0),
+            "claude-sonnet-4-20250514": (3.0, 15.0),
+        }
+        model = self.model or "unknown"
+        for key, (inp, out) in pricing.items():
+            if key in model or model.startswith(key):
+                inp_tok = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
+                out_tok = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
+                return (inp_tok * inp + out_tok * out) / 1_000_000
+        return 0.0

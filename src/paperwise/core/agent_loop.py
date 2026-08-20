@@ -15,6 +15,7 @@ from typing import Optional
 
 from paperwise.core.types import Message, Role, ToolCall, ToolResult
 from paperwise.core.plan import Plan, TaskStatus
+from paperwise.config.settings import get_settings
 
 
 class AgentLoopMixin:
@@ -50,6 +51,11 @@ class AgentLoopMixin:
 
         if tokens_used > token_limit:
             return f"token_budget ({tokens_used}/{token_limit})"
+
+        cost_used = getattr(self, "_cost_used", getattr(self.state, "cost_used", 0.0))
+        cost_limit = getattr(self, "_cost_limit", getattr(self.state, "cost_limit", getattr(get_settings(), "cost_budget_usd", 5.0)))
+        if cost_used > cost_limit:
+            return f"cost_budget (${cost_used:.3f}/${cost_limit:.2f})"
 
         if self.harness.is_circuit_open():
             return f"circuit_breaker ({self.harness.consecutive_errors} errors)"
@@ -139,64 +145,98 @@ class AgentLoopMixin:
     # ══════════ Completion / judge ══════════
 
     def _looks_complete(self, text: str) -> bool:
-        """Check whether the text looks like a final answer."""
-        complete_markers = [
+        """Check whether the agent has actually finished the task.
+
+        Combines explicit plan completion, required output existence,
+        and completion markers. No keyword-only guessing.
+        """
+        plan = getattr(self, "_plan", None)
+        if plan and plan.tasks:
+            # All planned tasks must be marked done.
+            if not plan.done:
+                return False
+
+            # Required outputs for finished tasks must exist.
+            if plan.get("generate_report"):
+                if not (self.workspace / "report" / "report.md").exists():
+                    return False
+            if plan.get("generate_pptx"):
+                if not list(self.workspace.glob("*.pptx")) and not list((self.workspace / "output").glob("*.pptx")):
+                    return False
+
+            # If the plan is done and no report/pptx is required, the task is complete.
+            # The final answer text itself is the output.
+            if not plan.get("generate_report") and not plan.get("generate_pptx"):
+                return True
+
+        # Fall back to text markers for tasks without an explicit plan.
+        markers = [
             "report has been generated", "report is complete",
             "final answer", "task complete", "all sections",
             "analysis complete", "ppt has been generated", "slides are ready",
-            # Chinese markers (session responds in Chinese)
-            "报告已生成", "报告已完成", "任务完成", "所有部分",
-            "分析完成", "ppt已生成", "幻灯片已就绪",
-            "最终回答", "总结",
         ]
-        text_lower = text.lower()
-        return any(m.lower() in text_lower for m in complete_markers)
+        lowered = text.lower()
+        return any(m in lowered for m in markers)
 
     async def _verify_completion(self) -> bool:
-        """Verify outputs exist and optionally run a judge review."""
-        checks = []
-        report_path = self.workspace / "report" / "report.md"
+        """Verify that outputs exist, are non-trivial, cite the paper, and pass judge review.
+
+        Output checks are conditional on the plan: only tasks explicitly planned
+        (generate_report, generate_pptx) require file outputs. Simple Q&A tasks
+        pass once the plan is complete.
+        """
         plan = getattr(self, "_plan", None)
 
-        if plan and plan.tasks:
-            # Plan-aware checks: the plan drives what outputs are expected.
-            if not plan.done:
-                done, total = plan.progress
-                self._emit("verify", f"Plan incomplete ({done}/{total})")
-                return False
+        # 1. Plan must be complete.
+        if plan and plan.tasks and not plan.done:
+            done, total = plan.progress
+            self._emit("verify", f"Plan incomplete ({done}/{total})")
+            return False
 
-            if plan.get("generate_report"):
-                checks.append(("report.md exists", report_path.exists()))
-                if report_path.exists():
-                    size = len(report_path.read_text(encoding="utf-8"))
-                    checks.append(("report size > 500", size > 500))
+        from paperwise.harness.verification import OutputVerifier
+        verifier = OutputVerifier(self.workspace)
+        checks = []
 
-            if plan.get("generate_pptx"):
-                output_dir = self.workspace / "output"
-                ppts = list(self.workspace.glob("*.pptx"))
-                if output_dir.exists():
-                    ppts.extend(output_dir.glob("*.pptx"))
-                checks.append(("pptx file", len(ppts) > 0))
+        needs_report = bool(plan and plan.get("generate_report"))
+        needs_pptx = bool(plan and plan.get("generate_pptx"))
 
-            if plan.get("verify_data"):
-                checks.append(("verify_data done", plan.get("verify_data").status == TaskStatus.DONE))
-        else:
-            # Fallback: no explicit plan task, check canonical outputs.
-            checks.append(("report.md exists", report_path.exists()))
+        if needs_report:
+            report_path = self.workspace / "report" / "report.md"
             if report_path.exists():
-                size = len(report_path.read_text(encoding="utf-8"))
-                checks.append(("report size > 500", size > 500))
-            analysis_dir = self.workspace / "analysis"
-            checks.append(("analysis directory", analysis_dir.exists()))
+                report_text = report_path.read_text(encoding="utf-8")
+                checks.append(("report exists", True))
+                checks.append(("report size > 500", len(report_text) > 500))
+                cit = verifier.verify_citations(report_text, "paper/text.md")
+                checks.append(("citations valid", cit.passed))
+            else:
+                checks.append(("report exists", False))
+                checks.append(("report size > 500", False))
+                checks.append(("citations valid", False))
+
+        if needs_pptx:
+            ppts = list(self.workspace.glob("*.pptx"))
+            out_dir = self.workspace / "output"
+            if out_dir.exists():
+                ppts.extend(out_dir.glob("*.pptx"))
+            checks.append(("pptx exists", bool(ppts)))
+
+        if not checks:
+            # No output artifacts required; plan completion is sufficient.
+            self._emit("verify", "Completion check: no output required, plan done")
+            return True
 
         passed = sum(1 for _, ok in checks if ok)
         total = len(checks)
         self._emit("verify", f"Completion check: {passed}/{total} passed")
 
-        if total and passed < total * 0.6:
+        if total and passed < total * 0.8:
             return False
 
-        return await self._judge_review()
+        # Only run the expensive judge review when there is an actual report to review.
+        if needs_report and (self.workspace / "report" / "report.md").exists():
+            return await self._judge_review()
+        return True
+
 
     async def _judge_review(self) -> bool:
         """Run a cheap judge review if a judge model is configured."""

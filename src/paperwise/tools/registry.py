@@ -136,6 +136,7 @@ class ToolRegistry:
         对应书中 4.1 节五类工具 + 5.1.1 节七核心 Coding Agent 工具
         """
         from paperwise.tools.file_tools import ReadFileTool, WriteFileTool, EditFileTool
+        from paperwise.tools.apply_patch_tool import ApplyPatchTool
         from paperwise.tools.search_tools import GlobTool, GrepTool
         from paperwise.tools.exec_tools import CodeInterpreterTool, BashTool
         from paperwise.tools.generation_tools import GeneratePPTXTool
@@ -156,6 +157,7 @@ class ToolRegistry:
         # 执行工具
         registry.register_all([
             WriteFileTool(workspace), EditFileTool(workspace),
+            ApplyPatchTool(workspace),
             CodeInterpreterTool(workspace), BashTool(workspace),
             GeneratePPTXTool(workspace),
         ])

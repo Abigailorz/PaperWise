@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # === Agent Defaults ===
     max_steps: int = Field(default=25, alias="PAPERWISE_MAX_STEPS")
     token_budget: int = Field(default=180_000, alias="PAPERWISE_TOKEN_BUDGET")
+    cost_budget_usd: float = Field(default=5.0, alias="PAPERWISE_COST_BUDGET_USD")
     context_window: int = Field(default=128_000, alias="PAPERWISE_CONTEXT_WINDOW")
     temperature: float = Field(default=0.3, alias="PAPERWISE_TEMPERATURE")
     time_budget_seconds: int = Field(default=1800, alias="PAPERWISE_TIME_BUDGET")

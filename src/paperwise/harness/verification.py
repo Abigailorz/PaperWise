@@ -62,3 +62,26 @@ class OutputVerifier:
         if missing:
             return VerificationResult(False, f"Missing files: {missing}")
         return VerificationResult(True, "All expected files present")
+
+
+    def verify_citations(self, text: str, paper_path: str = "paper/text.md") -> VerificationResult:
+        """Verify that [source: text.md Lxxx-Lyyy] references point to real paper lines."""
+        paper_file = self.workspace / paper_path
+        if not paper_file.exists():
+            return VerificationResult(True, "Paper text not found; citation check skipped")
+        paper_lines = paper_file.read_text(encoding="utf-8").splitlines()
+        import re
+        pattern = re.compile(r"\[source:\s*text\.md\s+L(\d+)(?:-L?(\d+))?\]", re.IGNORECASE)
+        missing = []
+        total = 0
+        for m in pattern.finditer(text):
+            total += 1
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else start
+            if start < 1 or end > len(paper_lines) or end < start:
+                missing.append(f"L{start}-L{end}")
+        if missing:
+            return VerificationResult(False, f"Invalid citations: {missing}")
+        if total == 0:
+            return VerificationResult(False, "No citations found")
+        return VerificationResult(True, f"All {total} citations verified")

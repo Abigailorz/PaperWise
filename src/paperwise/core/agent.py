@@ -105,7 +105,10 @@ class Agent(AgentLoopMixin):
 
                 # === Post-LLM: update state ===
                 self.harness.post_llm(self.state, response)
-                self._emit("tokens", f"~{self.state.tokens_used:,}/{self.state.token_limit:,} tokens")
+                # Track estimated cost using the active model pricing
+                if response.usage:
+                    self.state.cost_used += self.llm.estimate_cost(response.usage)
+                self._emit("tokens", f"~{self.state.tokens_used:,}/{self.state.token_limit:,} tokens  cost=${self.state.cost_used:.3f}")
 
                 # === Parse response ===
                 if response.tool_calls:
@@ -345,8 +348,15 @@ class Agent(AgentLoopMixin):
                 f"</instructions>\n"
             )
 
+        citation_rule = (
+            "\n<citation_rules>\n"
+            "Every factual claim MUST cite the source using [source: text.md Lxxx-Lyyy]. "
+            "If a fact cannot be found in the paper, write [source: not reported in paper]. "
+            "Claims without a valid source will be treated as hallucinations.\n"
+            "</citation_rules>\n"
+        )
         self.state.messages = self._memory.build_initial_context(
-            system_prompt=self.config.system_prompt,
+            system_prompt=self.config.system_prompt + citation_rule,
             task="".join(enhanced_task),
             workspace=self.workspace,
             plan_text=plan_text,

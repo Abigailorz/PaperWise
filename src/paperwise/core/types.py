@@ -60,6 +60,8 @@ class AgentState:
     max_steps: int = 25
     tokens_used: int = 0
     token_limit: int = 180_000
+    cost_used: float = 0.0
+    cost_limit: float = 5.0
     start_time: datetime = field(default_factory=datetime.now)
     workspace_dir: Optional[Path] = None
     task_description: str = ""
