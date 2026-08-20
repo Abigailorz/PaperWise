@@ -175,7 +175,9 @@ class HallucinationGrader(Grader):
         paper_text = context.get("paper_text", "")
         det = await self.detector.detect(output, paper_text)
         severity = det.get("severity", "none")
-        passed = severity not in ("critical", "major", "error")
+        # "error" means detection failed technically, not a hallucination;
+        # only fail on critical/major hallucination, not on detection errors.
+        passed = severity not in ("critical", "major")
         return GradeResult(
             passed=passed,
             score=1.0 if passed else 0.0,

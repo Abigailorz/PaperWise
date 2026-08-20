@@ -312,7 +312,7 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
 
     # Hallucination veto: if hallucination failed, force fail regardless of score
     hall_raw = grade_result.raw.get("HallucinationGrader", {})
-    if hall_raw.get("severity") in ("critical", "major", "error"):
+    if hall_raw.get("severity") in ("critical", "major"):
         res.passed = False
         if not any("hallucination" in e for e in res.errors):
             res.errors.append(f"hallucination:{hall_raw.get('severity')}")

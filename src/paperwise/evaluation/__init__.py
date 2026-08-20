@@ -40,7 +40,8 @@ class RubricEvaluator:
     async def _score_dimension(self, dim, report, paper):
         prompt = f"Evaluate report on '{dim.name}': {dim.description}\n\nPaper (truncated):\n{paper[:20000]}\n\nReport (truncated):\n{report[:15000]}\n\nScore 1-4 based on: {dim.levels}\n\nRespond JSON: {{\"score\": <int>, \"evidence\": \"<justification>\"}}"
         try:
-            resp = await self.llm.chat(messages=[{"role":"user","content":prompt}], temperature=0.1)
+            # Kimi Code only allows temperature=1; use it as the judge temperature
+            resp = await self.llm.chat(messages=[{"role":"user","content":prompt}], temperature=1)
             result = json.loads(resp.content)
             return result.get("score", 2), result.get("evidence", "No evidence")
         except Exception as e:
@@ -53,7 +54,8 @@ class HallucinationDetector:
     async def detect(self, report, paper_text):
         prompt = f"Detect hallucinations in this report. Paper (ground truth):\n{paper_text[:25000]}\n\nReport:\n{report[:15000]}\n\nIdentify fabricated claims (numerical, methodological, finding). Respond JSON: {{\"hallucinations\":[{{\"claim\":\"...\",\"reason\":\"...\",\"severity\":\"critical|major|minor\"}}],\"overall_severity\":\"none|minor|major|critical\",\"summary\":\"...\"}}"
         try:
-            resp = await self.llm.chat(messages=[{"role":"user","content":prompt}], temperature=0.1)
+            # Kimi Code only allows temperature=1; use it as the judge temperature
+            resp = await self.llm.chat(messages=[{"role":"user","content":prompt}], temperature=1)
             # Robust JSON extraction: the model may return markdown-wrapped JSON
             content = (resp.content or "").strip()
             if content.startswith("```"):
