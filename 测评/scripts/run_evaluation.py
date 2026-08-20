@@ -297,7 +297,7 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     context = {
         "agent_result": ar,
         "paper_text": paper_text,
-        "workspace": workspace,
+        "workspace": paper_dir,
         "scenario": sc,
     }
 

@@ -1,30 +1,71 @@
 {
   "paper_id": "langsplat_2312.16084",
   "title": "LangSplat: 3D Language Gaussian Splatting",
-  "authors": ["Minghan Qin", "Wanhua Li", "Jiawei Zhou", "Haoqian Wang", "Hanspeter Pfister"],
+  "authors": [
+    "Minghan Qin",
+    "Wanhua Li",
+    "Jiawei Zhou",
+    "Haoqian Wang",
+    "Hanspeter Pfister"
+  ],
   "venue": "CVPR 2024",
   "year": 2024,
   "expected_findings": {
     "main_contribution": "first 3D Gaussian Splatting-based 3D language fields using a scene-wise language autoencoder and SAM-based hierarchical semantics",
     "key_improvement": "199x faster than LERF at 1440x1080",
     "overall_localization_accuracy": "84.3% (LangSplat) vs 73.6% (LERF) vs 21.1% (LSeg)",
-    "baselines": ["LSeg", "LERF"],
-    "key_components": ["scene-wise language autoencoder", "SAM hierarchical semantics", "3D Gaussian Splatting"],
+    "baselines": [
+      "LSeg",
+      "LERF"
+    ],
+    "key_components": [
+      "scene-wise language autoencoder",
+      "SAM hierarchical semantics",
+      "3D Gaussian Splatting"
+    ],
     "speedup": 199,
     "resolution": "1440x1080"
   },
   "evaluation_criteria": {
-    "required_citations": ["199", "1440", "1080", "LSeg", "LERF", "SAM", "autoencoder", "84.3", "hierarchical"],
-    "must_include_numbers": [199, 1440, 1080, 84.3, 73.6, 21.1],
-    "must_mention_limitations": ["ambiguous", "SAM", "autoencoder"]
+    "required_citations": [
+      "199",
+      "1440",
+      "1080",
+      "LSeg",
+      "LERF",
+      "SAM",
+      "autoencoder",
+      "84.3",
+      "hierarchical"
+    ],
+    "must_include_numbers": [
+      199,
+      1440,
+      1080,
+      84.3,
+      73.6,
+      21.1
+    ],
+    "must_mention_limitations": [
+      "ambiguous",
+      "SAM",
+      "autoencoder"
+    ]
   },
   "agent_test_scenarios": [
     {
       "name": "basic_info_extraction",
       "level": 1,
       "task": "What is the main contribution of LangSplat? Answer concisely with evidence.",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["LangSplat", "autoencoder", "SAM"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "LangSplat",
+        "autoencoder",
+        "SAM"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -32,8 +73,16 @@
       "name": "numerical_fact_verification",
       "level": 1,
       "task": "How much faster is LangSplat than LERF, at what resolution, and what overall localization accuracy does it achieve? Give exact numbers.",
-      "expected_tools": ["grep", "read_file"],
-      "expected_answer_contains": ["199", "1440", "1080", "84.3"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
+      "expected_answer_contains": [
+        "199",
+        "1440",
+        "1080",
+        "84.3"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -41,8 +90,16 @@
       "name": "method_verification",
       "level": 2,
       "task": "How does LangSplat handle the ambiguity of CLIP embeddings and object boundaries? Describe the key components.",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["ambiguous", "hierarchical", "SAM", "autoencoder"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "ambiguous",
+        "hierarchical",
+        "SAM",
+        "autoencoder"
+      ],
       "max_steps": 8,
       "timeout": 180
     },
@@ -50,8 +107,16 @@
       "name": "critical_analysis",
       "level": 2,
       "task": "What challenges do existing 3D language field methods face, and what limitations or dependencies does LangSplat have?",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["imprecise", "vague", "SAM", "autoencoder"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "imprecise",
+        "vague",
+        "SAM",
+        "autoencoder"
+      ],
       "max_steps": 10,
       "timeout": 180
     },
@@ -59,7 +124,10 @@
       "name": "hallucination_veto",
       "level": 1,
       "task": "What BLEU score for machine translation does this paper report? Answer precisely.",
-      "expected_tools": ["grep", "read_file"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
       "expected_answer_contains": [],
       "forbid_fabrication": true,
       "max_steps": 5,
@@ -68,12 +136,18 @@
     {
       "name": "report_generation",
       "level": 3,
-      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
-      "expected_tools": ["write_file", "read_file", "grep"],
-      "min_output_files": ["report/report.md"],
-      "min_report_chars": 500,
-      "max_steps": 45,
-      "timeout": 600
+      "task": "Write a structured analysis report for this paper. Follow these steps EXACTLY:\n\n1. First, write a skeleton report to report/report.md with just the title and section headers (no content yet)\n2. Then, for EACH section below, write the content to report/sections/{section_name}.md\n3. Finally, update report/report.md to include the full content of all sections\n\nRequired sections (in this order):\n- summary: 2-3 sentences overview of the paper\n- methodology: key technical approach (2-3 paragraphs)\n- experiments: main results and findings (1-2 paragraphs)\n- limitations: stated limitations (1 paragraph)\n\nKeep each section SHORT (2-3 paragraphs max). Focus on accuracy over completeness.",
+      "expected_tools": [
+        "write_file",
+        "read_file",
+        "grep"
+      ],
+      "min_output_files": [
+        "report/report.md"
+      ],
+      "min_report_chars": 300,
+      "max_steps": 20,
+      "timeout": 300
     }
   ]
 }

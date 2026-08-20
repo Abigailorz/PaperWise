@@ -7,8 +7,16 @@
       "name": "basic_info_extraction",
       "level": 1,
       "task": "What is the main contribution of Mip-Splatting? Answer concisely with evidence.",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["3D smoothing filter", "2D Mip filter", "alias-free", "artifacts"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "3D smoothing filter",
+        "2D Mip filter",
+        "alias-free",
+        "artifacts"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -16,8 +24,16 @@
       "name": "method_verification",
       "level": 2,
       "task": "How does Mip-Splatting address the anti-aliasing problem in 3D Gaussian Splatting? Explain the technical approach.",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["3D smoothing filter", "maximum frequency", "2D Mip filter", "dilation"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "3D smoothing filter",
+        "maximum frequency",
+        "2D Mip filter",
+        "dilation"
+      ],
       "max_steps": 8,
       "timeout": 180
     },
@@ -25,8 +41,15 @@
       "name": "numerical_fact_verification",
       "level": 1,
       "task": "What improvements does Mip-Splatting report over the baseline 3DGS? Give exact numbers if mentioned.",
-      "expected_tools": ["grep", "read_file"],
-      "expected_answer_contains": ["PSNR", "improvement", "outperform"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
+      "expected_answer_contains": [
+        "PSNR",
+        "improvement",
+        "outperform"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -34,8 +57,15 @@
       "name": "critical_analysis",
       "level": 2,
       "task": "What are the stated limitations of Mip-Splatting, and can you identify any additional unstated limitations?",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["limitation", "sampling rate", "frequency"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "limitation",
+        "sampling rate",
+        "frequency"
+      ],
       "max_steps": 10,
       "timeout": 180
     },
@@ -43,7 +73,10 @@
       "name": "hallucination_veto",
       "level": 1,
       "task": "What COCO object detection mAP does this paper report? Answer precisely.",
-      "expected_tools": ["grep", "read_file"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
       "expected_answer_contains": [],
       "forbid_fabrication": true,
       "max_steps": 5,
@@ -52,12 +85,18 @@
     {
       "name": "report_generation",
       "level": 3,
-      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble report/report.md.",
-      "expected_tools": ["write_file", "read_file", "grep"],
-      "min_output_files": ["report/report.md"],
-      "min_report_chars": 500,
-      "max_steps": 30,
-      "timeout": 420
+      "task": "Write a structured analysis report for this paper. Follow these steps EXACTLY:\n\n1. First, write a skeleton report to report/report.md with just the title and section headers (no content yet)\n2. Then, for EACH section below, write the content to report/sections/{section_name}.md\n3. Finally, update report/report.md to include the full content of all sections\n\nRequired sections (in this order):\n- summary: 2-3 sentences overview of the paper\n- methodology: key technical approach (2-3 paragraphs)\n- experiments: main results and findings (1-2 paragraphs)\n- limitations: stated limitations (1 paragraph)\n\nKeep each section SHORT (2-3 paragraphs max). Focus on accuracy over completeness.",
+      "expected_tools": [
+        "write_file",
+        "read_file",
+        "grep"
+      ],
+      "min_output_files": [
+        "report/report.md"
+      ],
+      "min_report_chars": 300,
+      "max_steps": 20,
+      "timeout": 300
     }
   ]
 }

@@ -1,29 +1,68 @@
 {
   "paper_id": "feature3dgs_2312.03203",
   "title": "Feature 3DGS: Supercharging 3D Gaussian Splatting to Enable Distilled Feature Fields",
-  "authors": ["Shijie Zhou", "Haoran Chang", "Sicheng Jiang", "Zhiwen Fan", "Zehao Zhu", "Dejia Xu", "Pradyumna Chari", "Suya You", "Zhangyang Wang", "Achuta Kadambi"],
+  "authors": [
+    "Shijie Zhou",
+    "Haoran Chang",
+    "Sicheng Jiang",
+    "Zhiwen Fan",
+    "Zehao Zhu",
+    "Dejia Xu",
+    "Pradyumna Chari",
+    "Suya You",
+    "Zhangyang Wang",
+    "Achuta Kadambi"
+  ],
   "venue": "CVPR 2024",
   "year": 2024,
   "expected_findings": {
     "main_contribution": "distill arbitrary-dimensional features from 2D foundation models (SAM, CLIP-LSeg) into 3D Gaussian Splatting via low-dimensional distillation and learned convolutional upsampling",
     "key_improvement": "up to 2.7x faster feature field distillation/rendering than NeRF and up to 23% mIoU improvement",
-    "foundation_models": ["SAM", "CLIP", "LSeg"],
+    "foundation_models": [
+      "SAM",
+      "CLIP",
+      "LSeg"
+    ],
     "prompting": "first method to enable point and bounding-box prompting for radiance field manipulation",
     "speedup": 2.7,
     "miou_improvement": 23
   },
   "evaluation_criteria": {
-    "required_citations": ["2.7", "23%", "SAM", "CLIP", "LSeg", "mIoU", "point", "bounding-box", "prompt"],
-    "must_include_numbers": [2.7, 23],
-    "must_mention_limitations": ["failure cases", "complex scenes"]
+    "required_citations": [
+      "2.7",
+      "23%",
+      "SAM",
+      "CLIP",
+      "LSeg",
+      "mIoU",
+      "point",
+      "bounding-box",
+      "prompt"
+    ],
+    "must_include_numbers": [
+      2.7,
+      23
+    ],
+    "must_mention_limitations": [
+      "failure cases",
+      "complex scenes"
+    ]
   },
   "agent_test_scenarios": [
     {
       "name": "basic_info_extraction",
       "level": 1,
       "task": "What is the main contribution of Feature 3DGS? Answer concisely with evidence.",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["distill", "SAM", "CLIP", "LSeg"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "distill",
+        "SAM",
+        "CLIP",
+        "LSeg"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -31,8 +70,14 @@
       "name": "numerical_fact_verification",
       "level": 1,
       "task": "How much faster is Feature 3DGS feature distillation/rendering than NeRF-based methods, and what is the mIoU improvement? Give exact numbers.",
-      "expected_tools": ["grep", "read_file"],
-      "expected_answer_contains": ["2.7", "23%"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
+      "expected_answer_contains": [
+        "2.7",
+        "23%"
+      ],
       "max_steps": 6,
       "timeout": 120
     },
@@ -40,8 +85,16 @@
       "name": "method_verification",
       "level": 2,
       "task": "How does Feature 3DGS distill features from 2D foundation models, and what prompting capability does it enable?",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["distillation", "convolutional", "point", "bounding-box"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "distillation",
+        "convolutional",
+        "point",
+        "bounding-box"
+      ],
       "max_steps": 8,
       "timeout": 180
     },
@@ -49,8 +102,14 @@
       "name": "critical_analysis",
       "level": 2,
       "task": "What failure cases or limitations does the paper discuss, and can you identify additional ones?",
-      "expected_tools": ["read_file", "grep"],
-      "expected_answer_contains": ["failure cases", "complex scenes"],
+      "expected_tools": [
+        "read_file",
+        "grep"
+      ],
+      "expected_answer_contains": [
+        "failure cases",
+        "complex scenes"
+      ],
       "max_steps": 10,
       "timeout": 180
     },
@@ -58,7 +117,10 @@
       "name": "hallucination_veto",
       "level": 1,
       "task": "What COCO object detection mAP does this paper report? Answer precisely.",
-      "expected_tools": ["grep", "read_file"],
+      "expected_tools": [
+        "grep",
+        "read_file"
+      ],
       "expected_answer_contains": [],
       "forbid_fabrication": true,
       "max_steps": 5,
@@ -67,12 +129,18 @@
     {
       "name": "report_generation",
       "level": 3,
-      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
-      "expected_tools": ["write_file", "read_file", "grep"],
-      "min_output_files": ["report/report.md"],
-      "min_report_chars": 500,
-      "max_steps": 45,
-      "timeout": 600
+      "task": "Write a structured analysis report for this paper. Follow these steps EXACTLY:\n\n1. First, write a skeleton report to report/report.md with just the title and section headers (no content yet)\n2. Then, for EACH section below, write the content to report/sections/{section_name}.md\n3. Finally, update report/report.md to include the full content of all sections\n\nRequired sections (in this order):\n- summary: 2-3 sentences overview of the paper\n- methodology: key technical approach (2-3 paragraphs)\n- experiments: main results and findings (1-2 paragraphs)\n- limitations: stated limitations (1 paragraph)\n\nKeep each section SHORT (2-3 paragraphs max). Focus on accuracy over completeness.",
+      "expected_tools": [
+        "write_file",
+        "read_file",
+        "grep"
+      ],
+      "min_output_files": [
+        "report/report.md"
+      ],
+      "min_report_chars": 300,
+      "max_steps": 20,
+      "timeout": 300
     }
   ]
 }

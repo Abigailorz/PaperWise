@@ -122,7 +122,7 @@
     {
       "name": "report_generation",
       "level": 3,
-      "task": "Write a comprehensive analysis report for this paper. Save each section to report/sections/ and assemble at report/report.md.",
+      "task": "Write a structured analysis report for this paper. Follow these steps EXACTLY:\n\n1. First, write a skeleton report to report/report.md with just the title and section headers (no content yet)\n2. Then, for EACH section below, write the content to report/sections/{section_name}.md\n3. Finally, update report/report.md to include the full content of all sections\n\nRequired sections (in this order):\n- summary: 2-3 sentences overview of the paper\n- methodology: key technical approach (2-3 paragraphs)\n- experiments: main results and findings (1-2 paragraphs)\n- limitations: stated limitations (1 paragraph)\n\nKeep each section SHORT (2-3 paragraphs max). Focus on accuracy over completeness.",
       "expected_tools": [
         "write_file",
         "read_file",
@@ -131,9 +131,9 @@
       "min_output_files": [
         "report/report.md"
       ],
-      "min_report_chars": 500,
-      "max_steps": 45,
-      "timeout": 600
+      "min_report_chars": 300,
+      "max_steps": 20,
+      "timeout": 300
     }
   ]
 }
