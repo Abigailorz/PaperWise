@@ -48,7 +48,7 @@ def _build_agent(workspace: Path, config: AgentConfig, llm: MockLLMClient):
 def test_plan_order_read_then_grep(tmp_path):
     async def _inner():
         llm = MockLLMClient([
-            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "paper/text.md"})]),
+            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "text.md"})]),
             LLMResponse(tool_calls=[ToolCall(id="2", name="grep", arguments={"pattern": "accuracy"})]),
             LLMResponse(content="The main contribution is EfficientGraph with hierarchical attention. final answer."),
         ])
@@ -56,7 +56,7 @@ def test_plan_order_read_then_grep(tmp_path):
             name="test", system_prompt="You are a paper analyst.",
             max_steps=5, enable_plan=True, enable_budget_note=True,
             enable_judge_review=False, enable_hierarchical_memory=False,
-        )
+        enable_orchestration=False,)
         agent = _build_agent(tmp_path, config, llm)
         result = await agent.run("What is the main contribution?")
 
@@ -72,7 +72,7 @@ def test_budget_note_injected_at_high_usage(tmp_path):
         # Two tool calls push step usage to 0.5 before the final text response,
         # which should trigger the budget note.
         llm = MockLLMClient([
-            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "paper/text.md"})]),
+            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "text.md"})]),
             LLMResponse(tool_calls=[ToolCall(id="2", name="grep", arguments={"pattern": "EfficientGraph"})]),
             LLMResponse(content="final answer: contribution is EfficientGraph."),
         ])
@@ -80,7 +80,7 @@ def test_budget_note_injected_at_high_usage(tmp_path):
             name="test", system_prompt="You are a paper analyst.",
             max_steps=4, enable_plan=True, enable_budget_note=True,
             enable_judge_review=False, enable_hierarchical_memory=False,
-        )
+        enable_orchestration=False,)
         agent = _build_agent(tmp_path, config, llm)
         await agent.run("What is the main contribution?")
 
@@ -96,7 +96,7 @@ def test_budget_note_injected_at_high_usage(tmp_path):
 def test_budget_note_disabled(tmp_path):
     async def _inner():
         llm = MockLLMClient([
-            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "paper/text.md"})]),
+            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "text.md"})]),
             LLMResponse(tool_calls=[ToolCall(id="2", name="grep", arguments={"pattern": "EfficientGraph"})]),
             LLMResponse(content="final answer: contribution is EfficientGraph."),
         ])
@@ -104,7 +104,7 @@ def test_budget_note_disabled(tmp_path):
             name="test", system_prompt="You are a paper analyst.",
             max_steps=4, enable_plan=True, enable_budget_note=False,
             enable_judge_review=False, enable_hierarchical_memory=False,
-        )
+        enable_orchestration=False,)
         agent = _build_agent(tmp_path, config, llm)
         await agent.run("What is the main contribution?")
 
@@ -127,7 +127,7 @@ def test_stagnation_exit(tmp_path):
             name="test", system_prompt="You are a paper analyst.",
             max_steps=20, enable_plan=True, enable_budget_note=False,
             enable_judge_review=False, enable_hierarchical_memory=False,
-        )
+        enable_orchestration=False,)
         agent = _build_agent(tmp_path, config, llm)
         result = await agent.run("What is the main contribution?")
 
@@ -140,14 +140,14 @@ def test_stagnation_exit(tmp_path):
 def test_no_plan_ablation(tmp_path):
     async def _inner():
         llm = MockLLMClient([
-            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "paper/text.md"})]),
+            LLMResponse(tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "text.md"})]),
             LLMResponse(content="final answer: done."),
         ])
         config = AgentConfig(
             name="test", system_prompt="You are a paper analyst.",
             max_steps=5, enable_plan=False, enable_budget_note=False,
             enable_judge_review=False, enable_hierarchical_memory=False,
-        )
+        enable_orchestration=False,)
         agent = _build_agent(tmp_path, config, llm)
         result = await agent.run("What is the main contribution?")
 

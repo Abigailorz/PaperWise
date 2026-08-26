@@ -1,0 +1,592 @@
+{
+  "generated_at": "2026-08-26 20:04:20",
+  "part_a": null,
+  "part_b": {
+    "papers": [
+      {
+        "paper_id": "feature3dgs_2312.03203",
+        "title": "Feature 3DGS: Supercharging 3D Gaussian Splatting to Enable Distilled Feature Fields",
+        "model": null,
+        "k": 1,
+        "total_runs": 6,
+        "passed": 2,
+        "success_rate": 0.3333,
+        "pass_at_k": 0.3333,
+        "pass_consecutive_k": 0.3333,
+        "avg_steps": 9.2,
+        "avg_duration": 69.8,
+        "avg_legal_rate": 1.0,
+        "avg_tokens": 2239,
+        "per_scenario": {
+          "basic_info_extraction": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 6.0,
+            "avg_duration": 70.9,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "critical_analysis": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 10.0,
+            "avg_duration": 98.1,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "hallucination_veto": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 5.0,
+            "avg_duration": 29.1,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "method_verification": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 8.0,
+            "avg_duration": 70.7,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "numerical_fact_verification": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 6.0,
+            "avg_duration": 41.8,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "report_generation": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 20.0,
+            "avg_duration": 108.4,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          }
+        },
+        "runs": [
+          {
+            "name": "basic_info_extraction",
+            "passed": false,
+            "score": 0.7,
+            "steps": 6,
+            "duration": 70.9,
+            "tokens": 2761,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "major",
+            "errors": [
+              "[HallucinationGrader] The report contains one major hallucination regarding claiming to be the first method for enabling point and bounding-box prompting, and one minor issue with vague claims about speed improvements."
+            ],
+            "details": [
+              "[CodeGrader] keywords 4/4",
+              "[CodeGrader] tools 2/2",
+              "[TranscriptMetrics] steps=6",
+              "[TranscriptMetrics] legal_rate=100.00%"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "\\b[0-9]+(\\.[0-9]+)?\\b",
+                    "path": "text.md",
+                    "context_lines": 1
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 265,
+                    "limit": 15
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 5,
+                "assistant": 9,
+                "tool": 3
+              },
+              "total_messages": 18,
+              "config": "no-orchestration"
+            }
+          },
+          {
+            "name": "numerical_fact_verification",
+            "passed": false,
+            "score": 0.7,
+            "steps": 6,
+            "duration": 41.8,
+            "tokens": 1052,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "critical",
+            "errors": [
+              "[HallucinationGrader] The report contains several hallucinations, including unsupported claims of originality and unverified numerical improvements. These issues are critical as they lack supporting evidence from the paper."
+            ],
+            "details": [
+              "[CodeGrader] keywords 2/2",
+              "[CodeGrader] tools 2/2",
+              "[TranscriptMetrics] steps=6",
+              "[TranscriptMetrics] legal_rate=100.00%"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "faster|speed|rendering speed|distillation|IoU|mIoU|segmentation",
+                    "path": "text.md",
+                    "context_lines": 3
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "mIoU|IoU|segmentation.*accuracy|accuracy.*segmentation|speed.*faster|faster.*speed|rendering.*time|time.*rendering",
+                    "path": "text.md",
+                    "context_lines": 5
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Table.*2|Tab\\.\\s*2",
+                    "path": "text.md",
+                    "context_lines": 10
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 1040,
+                    "limit": 50
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 2,
+                "assistant": 6,
+                "tool": 5
+              },
+              "total_messages": 14,
+              "config": "no-orchestration"
+            }
+          },
+          {
+            "name": "method_verification",
+            "passed": false,
+            "score": 0.7,
+            "steps": 8,
+            "duration": 70.7,
+            "tokens": 2448,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "critical",
+            "errors": [
+              "[HallucinationGrader] The report contains several hallucinations, including unsupported claims of originality and numerical values without explicit support from the paper."
+            ],
+            "details": [
+              "[CodeGrader] keywords 4/4",
+              "[CodeGrader] tools 2/2",
+              "[TranscriptMetrics] steps=8",
+              "[TranscriptMetrics] legal_rate=100.00%"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "distill|distillation|SAM|CLIP|LSeg",
+                    "path": "text.md",
+                    "context_lines": 2
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Section C",
+                    "path": "text.md",
+                    "context_lines": 3
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 1975,
+                    "limit": 200
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Section C",
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "(IoU|accuracy|F1|PSNR|SSIM|mAP|BLEU|LPIPS|error|loss|metric|score|quantitative|performance|compare|vs|better|faster|speed|train|render|time|FPS|ms|sec)",
+                    "path": "text.md",
+                    "case_sensitive": false
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 3,
+                "assistant": 9,
+                "tool": 6
+              },
+              "total_messages": 19,
+              "config": "no-orchestration"
+            }
+          },
+          {
+            "name": "critical_analysis",
+            "passed": false,
+            "score": 0.8451,
+            "steps": 10,
+            "duration": 98.1,
+            "tokens": 4183,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "minor",
+            "errors": [],
+            "details": [
+              "[CodeGrader] keywords 2/2",
+              "[CodeGrader] tools 2/2",
+              "[RubricGrader] accuracy: {'score': 3, 'weight': 2.0, 'evidence': \"The report contains minor deviations from factual statements. For example, the paper mentions 'feature field distillation' but does not explicitly cite all the foundational works that this technique builds upon, such as the specific papers on 3D feature field distillation and related methods. While the paper does reference several key works (e.g., NeRF, SAM, LSeg), some of the technical details and concepts are presented without direct citations, which could be considered minor deviations from strict citation practices.\"}",
+              "[RubricGrader] completeness: {'score': 3, 'weight': 1.5, 'evidence': 'The report covers major aspects of the Feature 3DGS method, including its motivation, contributions, related work, and methodology. It provides an overview of the approach, details the technical components such as the parallel N-dimensional Gaussian rasterizer and speed-up module, and discusses experiments with 2D foundation models like SAM and LSeg. However, it lacks detailed experimental results, specific implementation details, and a thorough discussion of limitations or potential drawbacks of the proposed method.'}"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "(limitation|failure|shortcoming|challenge|drawback)",
+                    "path": "text.md",
+                    "case_sensitive": false
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 2785,
+                    "limit": 200
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 1321,
+                    "limit": 50
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 75,
+                    "limit": 30
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Section G|G\\. Failure Cases",
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 2785,
+                    "limit": 300
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 3,
+                "assistant": 11,
+                "tool": 7
+              },
+              "total_messages": 22,
+              "config": "no-orchestration"
+            }
+          },
+          {
+            "name": "hallucination_veto",
+            "passed": true,
+            "score": 1.0,
+            "steps": 5,
+            "duration": 29.1,
+            "tokens": 881,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "none",
+            "errors": [],
+            "details": [
+              "[CodeGrader] tools 2/2",
+              "[TranscriptMetrics] steps=5",
+              "[TranscriptMetrics] legal_rate=100.00%",
+              "[TranscriptMetrics] tool_efficiency=100.00%"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\hallucination_veto_1787746174_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "COCO|mAP|object detection",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\hallucination_veto_1787746174_0\\paper\\text.md",
+                    "case_sensitive": false
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Section 4|Experiments|Results|mAP|COCO",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\hallucination_veto_1787746174_0\\paper\\text.md",
+                    "case_sensitive": false
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 2,
+                "assistant": 5,
+                "tool": 3
+              },
+              "total_messages": 11,
+              "config": "no-orchestration"
+            }
+          },
+          {
+            "name": "report_generation",
+            "passed": true,
+            "score": 0.8482,
+            "steps": 20,
+            "duration": 108.4,
+            "tokens": 2107,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "minor",
+            "errors": [],
+            "details": [
+              "[CodeGrader] file exists: report/report.md",
+              "[CodeGrader] tools 3/3",
+              "[CodeGrader] output length 69931 >= 300",
+              "[RubricGrader] accuracy: {'score': 3, 'weight': 2.0, 'evidence': \"The report contains several factual statements that are not fully faithful. While the paper cites relevant works such as NeRF [30], mip-NeRF [1], Zip-NeRF [2], and others, there are minor deviations in references. For example, the reference to 'SAM' is cited as [20], but the exact citation details are not provided. Additionally, some equations and figures are referenced without clear context or full citation information. These minor deviations affect the faithfulness of the cited references.\"}"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "write_file",
+                  "args": {
+                    "path": "report/report.md",
+                    "content": "# Feature 3DGS: Supercharging 3D Gaussian Splatting to Enable Distilled Feature Fields\n\n## Summary\n\n## Methodology\n\n## Experiments\n\n## Limitations"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Summary",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md",
+                    "offset": 57,
+                    "limit": 100
+                  }
+                },
+                {
+                  "tool": "write_file",
+                  "args": {
+                    "path": "report/sections/summary.md",
+                    "content": "This paper introduces Feature 3DGS, a method that extends 3D Gaussian Splatting (3DGS) to support arbitrary-dimensional semantic feature fields via distillation from 2D foundation models like SAM and CLIP-LSeg [source: text.md L87-L117]. It overcomes limitations of prior NeRF-based feature field methods—namely slow rendering and continuity artifacts—by leveraging the real-time rendering speed of 3DGS while enabling novel-view semantic segmentation, language-guided editing, and promptable segmentation (e.g., \"segment anything\") [source: text.md L75-L127]. The authors claim their method is faster to train and render than NeRF-based alternatives and, to their knowledge, the first to enable point and bounding-box prompting for radiance field manipulation using SAM [source: text.md L119-L127]."
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Methodology|methodology|Our method|We propose",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md",
+                    "offset": 215,
+                    "limit": 200
+                  }
+                },
+                {
+                  "tool": "write_file",
+                  "args": {
+                    "path": "report/sections/methodology.md",
+                    "content": "Feature 3DGS extends the 3D Gaussian Splatting (3DGS) framework by associating a semantic feature vector with each 3D Gaussian, in addition to its standard color and opacity attributes [source: text.md L219-L221]. The core technical innovation is a \"Parallel N-dimensional Gaussian Rasterizer\" that differentiably splats and rasterizes these high-dimensional feature vectors, enabling distillation from 2D foundation models like SAM and CLIP-LSeg [source: text.md L359-L365, L225-L227].\n\nTo address the computational bottleneck of high-dimensional features, the method employs a two-stage strategy: it first learns a structured, lower-dimensional feature field and then applies a lightweight convolutional decoder to upsample it to the target dimension during rasterization [source: text.md L237-L241]. This design allows for fast training and rendering while preserving feature quality. The framework is general and compatible with various 2D foundation models, and it also introduces point and bounding-box prompting capabilities for radiance field manipulation by leveraging the SAM model [source: text.md L124-L127, L263-L267]."
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Experiments|experiments|Results|results",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md",
+                    "offset": 937,
+                    "limit": 500
+                  }
+                },
+                {
+                  "tool": "write_file",
+                  "args": {
+                    "path": "report/sections/experiments.md",
+                    "content": "The experiments demonstrate that Feature 3DGS achieves superior performance and speed compared to the NeRF-based baseline NeRF-DFF. On the Replica dataset, Feature 3DGS achieves an mIoU of 0.787 (vs. 0.636 for NeRF-DFF) and an accuracy of 0.943 (vs. 0.864), while also being significantly faster: its inference is 1.66× faster than NeRF-DFF when rendering 128-dimensional features [source: text.md L977, L1041, L1043, L1049, L1051]. With the optional \"speed-up module,\" the frame rate increases to 14.55 FPS, more than double the 6.84 FPS of the full model, without sacrificing RGB rendering quality (PSNR: 37.012 vs. 36.915) [source: text.md L991, L1037, L1041, L1083-L1091]. Qualitatively, Feature 3DGS produces more fine-grained segmentation masks and cleaner language-guided edits (e.g., extracting a banana hidden behind an apple) with fewer background floaters than NeRF-DFF [source: text.md L979, L1271-L1275, L1379-L1381]."
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "Limitations|limitation|Limitation",
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "C:\\Users\\13970\\Documents\\Codex\\2026-08-18\\https-github-com-abigailorz-paperwise-git\\work\\PaperWise\\workspace\\benchmarks\\eval_workspace\\eval_runs\\report_generation_1787746207_0\\paper\\text.md",
+                    "offset": 1321,
+                    "limit": 200
+                  }
+                },
+                {
+                  "tool": "write_file",
+                  "args": {
+                    "path": "report/sections/limitations.md",
+                    "content": "The paper explicitly states two inherent limitations of Feature 3DGS. First, the \"student feature's limited access to the ground truth feature restricts the overall performance,\" and second, \"the imperfections of the teacher network further constrain the student's learning\" [source: text.md L1323-L1327]. Additionally, the authors note that their adaptation of the original 3DGS pipeline, which inherently generates \"noise-inducing floaters,\" poses another challenge that affects the model's optimal performance [source: text.md L1389-L1393]."
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/summary.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/methodology.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/experiments.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/limitations.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/summary.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "report/sections/summary.md"
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 2,
+                "assistant": 20,
+                "tool": 20
+              },
+              "total_messages": 43,
+              "config": "no-orchestration"
+            }
+          }
+        ]
+      }
+    ],
+    "overall_success_rate": 0.3333,
+    "config": "no-orchestration"
+  }
+}

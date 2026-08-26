@@ -1,0 +1,292 @@
+{
+  "generated_at": "2026-08-26 19:56:18",
+  "part_a": null,
+  "part_b": {
+    "papers": [
+      {
+        "paper_id": "feature3dgs_2312.03203",
+        "title": "Feature 3DGS: Supercharging 3D Gaussian Splatting to Enable Distilled Feature Fields",
+        "model": null,
+        "k": 1,
+        "total_runs": 6,
+        "passed": 1,
+        "success_rate": 0.1667,
+        "pass_at_k": 0.1667,
+        "pass_consecutive_k": 0.1667,
+        "avg_steps": 0.8,
+        "avg_duration": 66.8,
+        "avg_legal_rate": 0.8333,
+        "avg_tokens": 476,
+        "per_scenario": {
+          "basic_info_extraction": {
+            "runs": 1,
+            "success_rate": 1.0,
+            "pass_at_k": 1.0,
+            "pass_consecutive_k": 1.0,
+            "avg_steps": 2.0,
+            "avg_duration": 24.1,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "critical_analysis": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 3.0,
+            "avg_duration": 37.6,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "hallucination_veto": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 0.0,
+            "avg_duration": 120.0,
+            "avg_legal_rate": 0.0,
+            "avg_rubric": 0.0
+          },
+          "method_verification": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 0.0,
+            "avg_duration": 81.8,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "numerical_fact_verification": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 0.0,
+            "avg_duration": 74.9,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          },
+          "report_generation": {
+            "runs": 1,
+            "success_rate": 0.0,
+            "pass_at_k": 0.0,
+            "pass_consecutive_k": 0.0,
+            "avg_steps": 0.0,
+            "avg_duration": 62.3,
+            "avg_legal_rate": 1.0,
+            "avg_rubric": 0.0
+          }
+        },
+        "runs": [
+          {
+            "name": "basic_info_extraction",
+            "passed": true,
+            "score": 1.0,
+            "steps": 2,
+            "duration": 24.1,
+            "tokens": 1080,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "minor",
+            "errors": [],
+            "details": [
+              "[CodeGrader] keywords 4/4",
+              "[CodeGrader] tools 1/2",
+              "[TranscriptMetrics] steps=2",
+              "[TranscriptMetrics] legal_rate=100.00%"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 1,
+                "assistant": 3,
+                "tool": 1
+              },
+              "total_messages": 6,
+              "config": "orchestration"
+            }
+          },
+          {
+            "name": "numerical_fact_verification",
+            "passed": false,
+            "score": 0.775,
+            "steps": 0,
+            "duration": 74.9,
+            "tokens": 0,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "minor",
+            "errors": [
+              "[CodeGrader] expected tools ['grep', 'read_file'], got {}"
+            ],
+            "details": [
+              "[CodeGrader] keywords 2/2",
+              "[TranscriptMetrics] steps=0",
+              "[TranscriptMetrics] legal_rate=100.00%",
+              "[TranscriptMetrics] tool_efficiency=0.00%"
+            ],
+            "trace": {
+              "tool_sequence": [],
+              "role_counts": {
+                "system": 0,
+                "user": 0,
+                "assistant": 0,
+                "tool": 0
+              },
+              "total_messages": 0,
+              "config": "orchestration"
+            }
+          },
+          {
+            "name": "method_verification",
+            "passed": false,
+            "score": 0.475,
+            "steps": 0,
+            "duration": 81.8,
+            "tokens": 0,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "major",
+            "errors": [
+              "[CodeGrader] expected tools ['read_file', 'grep'], got {}",
+              "[HallucinationGrader] The report contains two hallucinations. One is a critical issue where an arXiv reference is included that is not present in the paper. Another is a major issue where the report claims to be the first method to enable point and bounding-box prompting, which is not explicitly supported by the paper."
+            ],
+            "details": [
+              "[CodeGrader] keywords 4/4",
+              "[TranscriptMetrics] steps=0",
+              "[TranscriptMetrics] legal_rate=100.00%",
+              "[TranscriptMetrics] tool_efficiency=0.00%"
+            ],
+            "trace": {
+              "tool_sequence": [],
+              "role_counts": {
+                "system": 0,
+                "user": 0,
+                "assistant": 0,
+                "tool": 0
+              },
+              "total_messages": 0,
+              "config": "orchestration"
+            }
+          },
+          {
+            "name": "critical_analysis",
+            "passed": false,
+            "score": 0.6433,
+            "steps": 3,
+            "duration": 37.6,
+            "tokens": 1773,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "critical",
+            "errors": [
+              "[HallucinationGrader] The report contains critical hallucinations, including claims about Section G and failure cases that are not present in the provided text. Some additional limitations are inferred but not explicitly reported in the paper."
+            ],
+            "details": [
+              "[CodeGrader] keywords 2/2",
+              "[CodeGrader] tools 2/2",
+              "[RubricGrader] accuracy: {'score': 4, 'weight': 2.0, 'evidence': \"The report accurately reflects the content of the paper, citing specific sections and lines from the text. It explicitly references the failure cases and limitations discussed in Section G ('Failure Cases') and provides direct quotes from the paper. All claims are supported by the paper's content without any misrepresentation or omission.\"}",
+              "[RubricGrader] completeness: {'score': 3, 'weight': 1.5, 'evidence': \"The report covers major aspects of the paper, including the method's core contributions, technical details of the feature field distillation framework, and key experimental results. It explicitly discusses several failure cases and limitations in Section G, addressing issues like coarse segmentation boundaries, incomplete deletion of objects, and inherent limitations of the student model. However, it does not comprehensively cover all potential limitations, such as generalization to unseen domains, dependency on teacher model quality, computational costs, robustness to pose errors, or handling complex language prompts. These missing dimensions prevent it from being fully comprehensive.\"}"
+            ],
+            "trace": {
+              "tool_sequence": [
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "grep",
+                  "args": {
+                    "pattern": "(limitation|failure|challenge|drawback|shortcoming)",
+                    "case_sensitive": false,
+                    "context_lines": 2,
+                    "path": "text.md"
+                  }
+                },
+                {
+                  "tool": "read_file",
+                  "args": {
+                    "path": "text.md",
+                    "offset": 2785,
+                    "limit": 200
+                  }
+                }
+              ],
+              "role_counts": {
+                "system": 1,
+                "user": 1,
+                "assistant": 4,
+                "tool": 3
+              },
+              "total_messages": 9,
+              "config": "orchestration"
+            }
+          },
+          {
+            "name": "hallucination_veto",
+            "passed": false,
+            "score": 0.0,
+            "steps": 0,
+            "duration": 120.0,
+            "tokens": 0,
+            "legal_rate": 0.0,
+            "rubric": 0.0,
+            "hallucination": null,
+            "errors": [
+              "timeout"
+            ],
+            "details": [],
+            "trace": {}
+          },
+          {
+            "name": "report_generation",
+            "passed": false,
+            "score": 0.375,
+            "steps": 0,
+            "duration": 62.3,
+            "tokens": 0,
+            "legal_rate": 1.0,
+            "rubric": 0.0,
+            "hallucination": "major",
+            "errors": [
+              "[CodeGrader] missing files: ['report/report.md']",
+              "[CodeGrader] expected tools ['write_file', 'read_file', 'grep'], got {}",
+              "[HallucinationGrader] The report contains two hallucinations. One is a critical issue where an arXiv reference is included that is not present in the paper. Another is a major issue where the report claims to be the first method to enable point and bounding-box prompting, which is not explicitly supported by the paper."
+            ],
+            "details": [
+              "[CodeGrader] output length 66351 >= 300",
+              "[RubricGrader] accuracy: {'score': 2, 'weight': 2.0, 'evidence': 'The report contains multiple unreferenced claims and lacks proper citations for key methodologies and results. For example, the paper mentions improvements in mIoU without providing specific experimental results or references to support this claim. Additionally, the mathematical formulations and equations are presented without clear attribution to prior work. The lack of proper citations undermines the accuracy and credibility of the report.'}",
+              "[RubricGrader] completeness: {'score': 2, 'weight': 1.5, 'evidence': 'The report is truncated and lacks detailed coverage of key aspects such as methodology, experiments, results, and evaluation. It includes an abstract and some sections like Introduction and Method, but critical details are missing, making it difficult to assess the completeness of the work.'}",
+              "[RubricGrader] insight_depth: {'score': 2, 'weight': 1.5, 'evidence': 'The report provides a descriptive overview of the Feature 3DGS method, detailing its architecture, training process, and experiments. However, it lacks deeper insights into the underlying principles, limitations, or broader implications of the approach. The analysis is mostly surface-level, focusing on technical details without exploring critical aspects such as theoretical foundations, comparative analysis with other methods, or potential real-world applications beyond what is already mentioned.'}"
+            ],
+            "trace": {
+              "tool_sequence": [],
+              "role_counts": {
+                "system": 0,
+                "user": 0,
+                "assistant": 0,
+                "tool": 0
+              },
+              "total_messages": 0,
+              "config": "orchestration"
+            }
+          }
+        ]
+      }
+    ],
+    "overall_success_rate": 0.1667,
+    "config": "orchestration"
+  }
+}

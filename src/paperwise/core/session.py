@@ -30,6 +30,7 @@ from paperwise.core.types import (
 from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
 from paperwise.core.agent_loop import AgentLoopMixin
+from paperwise.orchestration import SmartOrchestrator, TaskClassifier
 
 
 @dataclass
@@ -211,12 +212,44 @@ class AgentSession(AgentLoopMixin):
 
     # ══════════ 核心：对话接口 ══════════
 
+    def _should_orchestrate(self, user_message: str) -> bool:
+        """Return True if the task should run through the multi-agent orchestrator."""
+        if not self.state.current_paper:
+            return False
+        classifier = TaskClassifier(self.llm, self.workspace)
+        complexity = classifier.classify(user_message)
+        return complexity.is_complex
+
+    async def _run_orchestrated(self, user_message: str) -> str:
+        """Run a complex task through SmartOrchestrator and inject a summary into the session."""
+        paper_dir = Path(self.state.current_paper)
+        orchestrator = SmartOrchestrator(
+            llm_client=self.llm,
+            workspace=self.workspace,
+            base_config=None,
+        )
+        result = await orchestrator.run(user_message, paper_dir=paper_dir)
+        summary = (
+            f"<orchestration_result>\n"
+            f"Task routed through multi-agent orchestration (success={result.success}).\n"
+            f"Final output:\n{result.final_output[:2000]}\n"
+            f"</orchestration_result>"
+        )
+        from paperwise.core.types import Message
+        self.state.messages.append(Message(role="system", content=summary))
+        self._hierarchical_memory.add_turn(Message(role="system", content=summary))
+        return result.final_output
+
     async def chat(self, user_message: str) -> str:
+
         """接收用户消息，返回 Agent 回复。上下文跨轮保留。"""
         self.state.last_active = time.strftime("%Y-%m-%d %H:%M:%S")
         self._step_count = 0
         self._consecutive_text_responses = 0
         self._current_task_description = user_message
+        # Route complex tasks on loaded papers through the orchestrator
+        if self._should_orchestrate(user_message):
+            return await self._run_orchestrated(user_message)
         # 每轮对话重置工具暴露（避免上一轮 skill 的工具绑定泄漏到本轮）
         if hasattr(self.tools, "activate_all"):
             self.tools.activate_all()

@@ -1,0 +1,331 @@
+{
+  "generated_at": "2026-08-26 19:41:32",
+  "part_a": null,
+  "part_b": {
+    "paper": "simple",
+    "model": null,
+    "k": 1,
+    "total_runs": 6,
+    "passed": 2,
+    "success_rate": 0.3333,
+    "pass_at_k": 0.3333,
+    "pass_consecutive_k": 0.3333,
+    "avg_steps": 1.8,
+    "avg_duration": 22.2,
+    "avg_legal_rate": 0.8,
+    "avg_tokens": 164,
+    "per_scenario": {
+      "basic_info_extraction": {
+        "runs": 1,
+        "success_rate": 1.0,
+        "pass_at_k": 1.0,
+        "pass_consecutive_k": 1.0,
+        "avg_steps": 6.0,
+        "avg_duration": 23.7,
+        "avg_legal_rate": 0.4,
+        "avg_rubric": 0.0
+      },
+      "code_verification": {
+        "runs": 1,
+        "success_rate": 0.0,
+        "pass_at_k": 0.0,
+        "pass_consecutive_k": 0.0,
+        "avg_steps": 0.0,
+        "avg_duration": 14.7,
+        "avg_legal_rate": 1.0,
+        "avg_rubric": 0.0
+      },
+      "critical_analysis": {
+        "runs": 1,
+        "success_rate": 0.0,
+        "pass_at_k": 0.0,
+        "pass_consecutive_k": 0.0,
+        "avg_steps": 0.0,
+        "avg_duration": 14.4,
+        "avg_legal_rate": 1.0,
+        "avg_rubric": 0.0
+      },
+      "hallucination_veto": {
+        "runs": 1,
+        "success_rate": 1.0,
+        "pass_at_k": 1.0,
+        "pass_consecutive_k": 1.0,
+        "avg_steps": 5.0,
+        "avg_duration": 46.8,
+        "avg_legal_rate": 0.4,
+        "avg_rubric": 0.0
+      },
+      "numerical_fact_verification": {
+        "runs": 1,
+        "success_rate": 0.0,
+        "pass_at_k": 0.0,
+        "pass_consecutive_k": 0.0,
+        "avg_steps": 0.0,
+        "avg_duration": 14.3,
+        "avg_legal_rate": 1.0,
+        "avg_rubric": 0.0
+      },
+      "report_generation": {
+        "runs": 1,
+        "success_rate": 0.0,
+        "pass_at_k": 0.0,
+        "pass_consecutive_k": 0.0,
+        "avg_steps": 0.0,
+        "avg_duration": 19.1,
+        "avg_legal_rate": 1.0,
+        "avg_rubric": 0.0
+      }
+    },
+    "runs": [
+      {
+        "name": "basic_info_extraction",
+        "passed": true,
+        "score": 0.85,
+        "steps": 6,
+        "duration": 23.7,
+        "tokens": 601,
+        "legal_rate": 0.4,
+        "rubric": 0.0,
+        "hallucination": "none",
+        "errors": [],
+        "details": [
+          "[CodeGrader] keywords 3/3",
+          "[CodeGrader] tools 1/2",
+          "[TranscriptMetrics] steps=6",
+          "[TranscriptMetrics] legal_rate=40.00%"
+        ],
+        "trace": {
+          "tool_sequence": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "workspace\\eval_runs\\basic_info_extraction_1787744492_0\\paper\\text.md"
+              }
+            },
+            {
+              "tool": "glob",
+              "args": {
+                "path": "workspace\\eval_runs\\basic_info_extraction_1787744492_0\\paper",
+                "pattern": "*"
+              }
+            },
+            {
+              "tool": "glob",
+              "args": {
+                "path": "workspace\\eval_runs\\basic_info_extraction_1787744492_0\\paper",
+                "pattern": "**/*"
+              }
+            },
+            {
+              "tool": "glob",
+              "args": {
+                "pattern": "**/text.md"
+              }
+            },
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "text.md"
+              }
+            }
+          ],
+          "role_counts": {
+            "system": 1,
+            "user": 1,
+            "assistant": 6,
+            "tool": 5
+          },
+          "total_messages": 13,
+          "config": "orchestration"
+        }
+      },
+      {
+        "name": "numerical_fact_verification",
+        "passed": false,
+        "score": 0.475,
+        "steps": 0,
+        "duration": 14.3,
+        "tokens": 0,
+        "legal_rate": 1.0,
+        "rubric": 0.0,
+        "hallucination": "critical",
+        "errors": [
+          "[CodeGrader] expected tools ['grep', 'read_file'], got {}",
+          "[HallucinationGrader] The report contains a hallucination in the form of an error message '[Reader failed] circuit_breaker (5 errors)' that is not present in the original paper. This is a critical issue as it introduces irrelevant and unsupported content."
+        ],
+        "details": [
+          "[CodeGrader] keywords 2/2",
+          "[TranscriptMetrics] steps=0",
+          "[TranscriptMetrics] legal_rate=100.00%",
+          "[TranscriptMetrics] tool_efficiency=0.00%"
+        ],
+        "trace": {
+          "tool_sequence": [],
+          "role_counts": {
+            "system": 0,
+            "user": 0,
+            "assistant": 0,
+            "tool": 0
+          },
+          "total_messages": 0,
+          "config": "orchestration"
+        }
+      },
+      {
+        "name": "code_verification",
+        "passed": false,
+        "score": 0.475,
+        "steps": 0,
+        "duration": 14.7,
+        "tokens": 0,
+        "legal_rate": 1.0,
+        "rubric": 0.0,
+        "hallucination": "critical",
+        "errors": [
+          "[CodeGrader] expected tools ['code_interpreter'], got {}",
+          "[HallucinationGrader] The report contains a hallucination in the form of 'Reader failed circuit_breaker (5 errors)' which is not mentioned or supported by the paper. All other content in the report matches the paper exactly."
+        ],
+        "details": [
+          "[CodeGrader] keywords 2/3",
+          "[TranscriptMetrics] steps=0",
+          "[TranscriptMetrics] legal_rate=100.00%",
+          "[TranscriptMetrics] tool_efficiency=0.00%"
+        ],
+        "trace": {
+          "tool_sequence": [],
+          "role_counts": {
+            "system": 0,
+            "user": 0,
+            "assistant": 0,
+            "tool": 0
+          },
+          "total_messages": 0,
+          "config": "orchestration"
+        }
+      },
+      {
+        "name": "critical_analysis",
+        "passed": false,
+        "score": 0.7067,
+        "steps": 0,
+        "duration": 14.4,
+        "tokens": 0,
+        "legal_rate": 1.0,
+        "rubric": 0.0,
+        "hallucination": "minor",
+        "errors": [
+          "[CodeGrader] expected tools ['read_file', 'grep'], got {}"
+        ],
+        "details": [
+          "[CodeGrader] keywords 2/2",
+          "[RubricGrader] accuracy: {'score': 4, 'weight': 2.0, 'evidence': 'All factual statements in the report are faithful to the paper. The accuracy figures, comparisons with other methods, computational efficiency improvements, and ablation study results are accurately represented without any deviations or unreferenced claims.'}",
+          "[RubricGrader] completeness: {'score': 4, 'weight': 1.5, 'evidence': 'The report is comprehensive, covering all key aspects of the paper. It includes the abstract, introduction, related work, method, experiments (with detailed datasets, results, and computational efficiency analysis), ablation studies, limitations, and conclusion. The content is fully aligned with the original paper, and all critical components of the research are thoroughly addressed.'}",
+          "[RubricGrader] insight_depth: {'score': 4, 'weight': 1.5, 'evidence': 'The report provides original insights into the design and evaluation of EfficientGraph, including a novel hierarchical attention mechanism and dynamic graph pruning strategy. It offers detailed experimental results, computational efficiency analysis, and ablation studies that validate the effectiveness of the proposed components. The paper also identifies key limitations and suggests future directions, demonstrating a deep understanding of the problem space and contributions.'}"
+        ],
+        "trace": {
+          "tool_sequence": [],
+          "role_counts": {
+            "system": 0,
+            "user": 0,
+            "assistant": 0,
+            "tool": 0
+          },
+          "total_messages": 0,
+          "config": "orchestration"
+        }
+      },
+      {
+        "name": "report_generation",
+        "passed": false,
+        "score": 0.4388,
+        "steps": 0,
+        "duration": 19.1,
+        "tokens": 0,
+        "legal_rate": 1.0,
+        "rubric": 0.0,
+        "hallucination": "critical",
+        "errors": [
+          "[CodeGrader] missing files: ['report/report.md']",
+          "[CodeGrader] expected tools ['write_file', 'read_file', 'grep'], got {}",
+          "[HallucinationGrader] The report contains a hallucination in the form of an unrelated error message ('Reader failed] circuit_breaker (5 errors)') that is not present in the original paper. This is a critical issue as it introduces irrelevant content not supported by the paper."
+        ],
+        "details": [
+          "[CodeGrader] output length 5779 >= 500",
+          "[RubricGrader] accuracy: {'score': 4, 'weight': 2.0, 'evidence': 'All factual statements in the report are faithful to the paper. The accuracy figures, comparisons with other methods, computational efficiency improvements, and ablation study results are accurately represented without any deviations or unreferenced claims.'}",
+          "[RubricGrader] completeness: {'score': 4, 'weight': 1.5, 'evidence': 'The report is comprehensive, covering all key aspects of the paper. It includes the abstract, introduction, related work, method, experiments (with detailed datasets, results, and computational efficiency analysis), ablation studies, limitations, and conclusion. The content is fully aligned with the original paper and provides a complete overview of the research.'}",
+          "[RubricGrader] insight_depth: {'score': 4, 'weight': 1.5, 'evidence': \"The report provides original insights into the design and evaluation of EfficientGraph, including a novel hierarchical attention mechanism and dynamic graph pruning strategy. It offers detailed experimental results, computational efficiency analysis, and ablation studies that validate the effectiveness of the proposed components. The paper also identifies key limitations and suggests future directions, demonstrating a deep understanding of the problem space and the method's contributions.\"}"
+        ],
+        "trace": {
+          "tool_sequence": [],
+          "role_counts": {
+            "system": 0,
+            "user": 0,
+            "assistant": 0,
+            "tool": 0
+          },
+          "total_messages": 0,
+          "config": "orchestration"
+        }
+      },
+      {
+        "name": "hallucination_veto",
+        "passed": true,
+        "score": 0.8125,
+        "steps": 5,
+        "duration": 46.8,
+        "tokens": 380,
+        "legal_rate": 0.4,
+        "rubric": 0.0,
+        "hallucination": "none",
+        "errors": [],
+        "details": [
+          "[CodeGrader] tools 1/2",
+          "[TranscriptMetrics] steps=5",
+          "[TranscriptMetrics] legal_rate=25.00%",
+          "[TranscriptMetrics] tool_efficiency=25.00%"
+        ],
+        "trace": {
+          "tool_sequence": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "workspace\\eval_runs\\hallucination_veto_1787744609_0\\paper\\text.md"
+              }
+            },
+            {
+              "tool": "glob",
+              "args": {
+                "path": "workspace\\eval_runs\\hallucination_veto_1787744609_0\\paper",
+                "pattern": "*"
+              }
+            },
+            {
+              "tool": "bash",
+              "args": {}
+            },
+            {
+              "tool": "bash",
+              "args": {
+                "command": "dir workspace\\eval_runs\\hallucination_veto_1787744609_0\\paper"
+              }
+            },
+            {
+              "tool": "bash",
+              "args": {
+                "command": "dir workspace"
+              }
+            }
+          ],
+          "role_counts": {
+            "system": 1,
+            "user": 1,
+            "assistant": 5,
+            "tool": 5
+          },
+          "total_messages": 12,
+          "config": "orchestration"
+        }
+      }
+    ]
+  }
+}

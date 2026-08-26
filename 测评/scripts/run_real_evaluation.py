@@ -133,7 +133,7 @@ async def main():
     ap.add_argument("--scenario", type=int)
     ap.add_argument("--model", default=None)
     ap.add_argument("--config", default="full",
-                    choices=["full", "no-plan", "no-budget", "no-judge", "no-memory", "baseline"])
+                    choices=["full", "no-plan", "no-budget", "no-judge", "no-memory", "baseline", "orchestration", "no-orchestration"])
     args = ap.parse_args()
 
     report = {

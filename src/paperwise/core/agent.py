@@ -70,6 +70,26 @@ class Agent(AgentLoopMixin):
         self.callbacks.append(callback)
 
     async def run(self, task: str) -> AgentResult:
+        """Execute the task, routing through orchestration when enabled."""
+        if not getattr(self.config, "enable_orchestration", True):
+            return await self._legacy_run(task)
+        # Lazy import avoids circular dependency with orchestration.orchestrator
+        from paperwise.orchestration import SmartOrchestrator
+        orchestrator = SmartOrchestrator(
+            llm_client=self.llm,
+            workspace=self.workspace,
+            base_config=self.config,
+        )
+        result = await orchestrator.run(task, paper_dir=self.workspace)
+        # Copy sub-agent metrics into the outer agent state so downstream eval code
+        # can read from agent.state as before.
+        self.state.messages = result.messages or self.state.messages
+        self.state.current_step = result.steps
+        self.state.tool_call_count = result.tool_stats or self.state.tool_call_count
+        self.state.tokens_used = result.tokens_used
+        return result
+
+    async def _legacy_run(self, task: str) -> AgentResult:
         """Execute the ReAct loop until the task is completed or a limit is hit."""
         self.state.task_description = task
         self._init_messages(task)
@@ -321,7 +341,7 @@ class Agent(AgentLoopMixin):
         """Build initial context using explicit plan and hierarchical memory."""
         self._memory = HierarchicalMemory(self.workspace, llm_client=self.llm)
 
-        if getattr(self.config, "enable_plan", True):
+        if getattr(self.config, "enable_plan", True) and not self._plan.tasks:
             self._plan = Plan.from_task_text(task)
             self.state.todo_items = self._plan.to_todo_items()
             plan_text = self._plan.to_status_text()
@@ -414,6 +434,7 @@ class Agent(AgentLoopMixin):
             steps=self.state.current_step,
             tool_stats=dict(self.state.tool_call_count),
             success=success, error_message=error,
+            tokens_used=self.state.tokens_used,
         )
         self._save_trajectory()
         return result

@@ -14,11 +14,14 @@ ABLATON_CONFIGS: dict[str, dict] = {
     "no-budget": {"enable_budget_note": False},
     "no-judge": {"enable_judge_review": False},
     "no-memory": {"enable_hierarchical_memory": False},
+    "orchestration": {"enable_orchestration": True},
+    "no-orchestration": {"enable_orchestration": False},
     "baseline": {
         "enable_plan": False,
         "enable_budget_note": False,
         "enable_judge_review": False,
         "enable_hierarchical_memory": False,
+        "enable_orchestration": False,
     },
 }
 

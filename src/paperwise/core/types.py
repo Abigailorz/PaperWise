@@ -83,6 +83,7 @@ class AgentConfig:
     enable_budget_note: bool = True
     enable_judge_review: bool = True
     enable_hierarchical_memory: bool = True
+    enable_orchestration: bool = True
 
 
 @dataclass
@@ -94,6 +95,7 @@ class AgentResult:
     tool_stats: dict[str, int] = field(default_factory=dict)
     success: bool = True
     error_message: str = ""
+    tokens_used: int = 0
 
 
 @dataclass

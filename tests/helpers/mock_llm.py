@@ -59,4 +59,8 @@ class MockLLMClient:
         yield StreamEvent(type="done")
 
 
+    def estimate_cost(self, usage: dict) -> float:
+        return 0.0
+
+
 __all__ = ["MockLLMClient"]

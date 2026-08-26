@@ -346,6 +346,7 @@ class AgentOrchestrator:
             system_prompt=spec.system_prompt,
             model=self.model,
             max_steps=agent_max_steps,
+            enable_orchestration=False,
         )
 
         agent = Agent(
