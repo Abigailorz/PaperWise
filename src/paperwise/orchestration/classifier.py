@@ -53,8 +53,8 @@ class TaskClassifier:
         r"\bvalidat(?:e|ion)\b",
         r"\bnumerical\b",
         r"\bcritical\b",
-        r"\blimitation\b",
         r"\bweakness\b",
+        r"\bdeep critique\b",
         r"\bcompare\b",
         r"\bcomparison\b",
         r"\bsurvey\b",
@@ -79,6 +79,15 @@ class TaskClassifier:
         r"\bwhere\b",
         r"\bwhich\b",
         r"\bhow many\b",
+        r"\bhow much\b",
+        r"\bhow does\b",
+        r"\bhow do\b",
+        r"\bwhat is the\b",
+        r"\bwhat are the\b",
+        r"\bwhat does\b",
+        r"\bexact numbers?\b",
+        r"\b(this paper|the paper) reports?\b",
+        r"\breported\b",
         r"\b贡献\b",
         r"\b作者\b",
         r"\b数据集\b",
@@ -103,6 +112,18 @@ class TaskClassifier:
         if workspace:
             self._load_cache()
 
+    @staticmethod
+    def _is_paper_metric_lookup(text: str) -> bool:
+        """Return True for questions about a metric/value reported by the paper."""
+        return bool(
+            re.search(
+                r"\b(what|which|how)\b.*\b(this paper|the paper)\b.*\breport(s|ed)?\b",
+                text,
+                re.IGNORECASE,
+            )
+            or re.search(r"\b(what|which|how)\b.*\breported\b", text, re.IGNORECASE)
+        )
+
     def classify(self, task: str, use_cache: bool = True) -> TaskComplexity:
         """Classify a task. Cached results are reused when use_cache=True."""
         key = self._cache_key(task)
@@ -110,6 +131,20 @@ class TaskClassifier:
             return self._cache[key]
 
         text = task.lower().strip()
+
+        # Pre-rule: short questions about what the paper reports are simple factual lookups.
+        if self._is_paper_metric_lookup(text) and len(text.split()) <= 45:
+            result = TaskComplexity(
+                level=ComplexityLevel.SIMPLE,
+                confidence="high",
+                reason="factual lookup: what metric/value the paper reports",
+            )
+            if use_cache:
+                self._cache[key] = result
+                self._save_cache()
+            return result
+
+        complex_hits = sum(1 for p in self._COMPLEX_KEYWORDS if re.search(p, text, re.IGNORECASE))
 
         complex_hits = sum(1 for p in self._COMPLEX_KEYWORDS if re.search(p, text, re.IGNORECASE))
         simple_hits = sum(1 for p in self._SIMPLE_KEYWORDS if re.search(p, text, re.IGNORECASE))
@@ -122,12 +157,23 @@ class TaskClassifier:
                 confidence="high",
                 reason=f"matched {complex_hits} complex keyword(s)",
             )
-        # Strong simple rule: simple keyword and no complex keyword AND short
-        elif simple_hits > 0 and len(text.split()) <= 25:
+        # Strong simple rule: simple keyword and no complex keyword AND short or medium
+        elif simple_hits > 0 and complex_hits == 0 and len(text.split()) <= 45:
             result = TaskComplexity(
                 level=ComplexityLevel.SIMPLE,
                 confidence="high",
-                reason="short factual lookup with simple keyword",
+                reason="factual lookup with simple keyword and no artifact keyword",
+            )
+        # Number-focused factual questions without complex artifact keywords are simple
+        elif (
+            re.search(r"\b\d+(\.\d+)?%?\b", text)
+            and complex_hits == 0
+            and len(text.split()) <= 50
+        ):
+            result = TaskComplexity(
+                level=ComplexityLevel.SIMPLE,
+                confidence="high",
+                reason="number-focused factual lookup without complex artifact keywords",
             )
         # Ambiguous: contains analysis/explain/method but no artifact keyword -> medium
         elif medium_hits > 0 and len(text.split()) <= 20:

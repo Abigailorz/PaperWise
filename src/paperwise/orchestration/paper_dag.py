@@ -75,7 +75,7 @@ class PaperDAGPlanner:
         plan.add("Read paper and extract key facts", task_id="read_paper")
 
         # Phase 2: method analysis (feeds into report)
-        if needs_report or needs_pptx or needs_critical:
+        if needs_report or needs_pptx:
             plan.add(
                 "Analyze methodology and main claims",
                 depends_on=["read_paper"],
@@ -113,8 +113,8 @@ class PaperDAGPlanner:
                 task_id="generate_report",
             )
 
-        # Phase 5: review + revision loop (only for report/pptx/critical outputs)
-        if needs_report or needs_pptx or needs_critical:
+        # Phase 5: review + revision loop (only for report/pptx outputs)
+        if needs_report or needs_pptx:
             review_deps = []
             if plan.get("generate_report"):
                 review_deps.append("generate_report")

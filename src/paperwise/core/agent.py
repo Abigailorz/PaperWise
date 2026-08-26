@@ -349,10 +349,12 @@ class Agent(AgentLoopMixin):
                 f"<task>\n{task}\n</task>\n\n"
                 f"<instructions>\n"
                 f"1. Follow the explicit plan in <current_plan>; mark tasks done as you finish them\n"
-                f"2. Execute the plan step by step\n"
-                f"3. AFTER each step, verify the output exists before moving on\n"
-                f"4. When ALL plan tasks are done, produce the final report\n"
-                f"5. DO NOT claim completion until all output files exist\n"
+                f"2. If the plan includes 'read_paper', you MUST call read_file or grep on text.md FIRST\n"
+                f"   before giving any final answer. A final answer without reading the paper is a hallucination.\n"
+                f"3. Execute the plan step by step\n"
+                f"4. AFTER each step, verify the output exists before moving on\n"
+                f"5. When ALL plan tasks are done, produce the final report\n"
+                f"6. DO NOT claim completion until all output files exist\n"
                 f"</instructions>\n"
             )
         else:
@@ -363,8 +365,9 @@ class Agent(AgentLoopMixin):
                 f"<task>\n{task}\n</task>\n\n"
                 f"<instructions>\n"
                 f"1. Reason step by step to complete the task\n"
-                f"2. Use available tools when needed\n"
-                f"3. Verify any output files exist before claiming completion\n"
+                f"2. Read the paper (text.md) with read_file or grep before answering any factual question\n"
+                f"3. Use available tools when needed\n"
+                f"4. Verify any output files exist before claiming completion\n"
                 f"</instructions>\n"
             )
 

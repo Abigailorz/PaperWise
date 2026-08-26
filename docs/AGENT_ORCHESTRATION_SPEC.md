@@ -1,8 +1,8 @@
  # PaperWise Agent 编排改进方案 v0.6.0
  
  > 目标：解决当前 Agent 对简单/复杂任务“一刀切”执行的问题，参考现有 Plan DAG 与多 Agent 编排能力，设计并实现“复杂度感知 + 动态 DAG + 多 Agent 协作”的工作流。
- > 版本：v0.6.0
- > 状态：设计稿 -> 实现中
+ > 版本：v0.6.0-v2（已实现并提交）
+ > 状态：已实现、已测评、待后续功能补全
  
  ## 1. 现状诊断
  
@@ -266,7 +266,42 @@
  | 默认开关 | `enable_orchestration=True` | 新项目即开即用，ablation 可关闭 |
  | 向后兼容 | `enable_orchestration=False` 回退旧逻辑 | 不破坏现有评测入口 |
  
- ## 11. 附录：与 SOTA 的对齐
+ ## 11. v2 关键实现修正
+
+ 在首次真实测评（ORCHESTRATION_EVAL_REPORT.md）暴露问题后，对编排实现做了以下最小化修正：
+
+ 1. **Simple 路径读论文强制约束**（`src/paperwise/core/agent_loop.py` + `src/paperwise/core/agent.py`）
+    - `_looks_complete` 现在要求：若 plan 中存在 `read_paper`，则该任务必须先被标记为 `DONE`；否则不会认为任务完成。
+    - `_init_messages` 在系统提示中显式要求：`"如果 plan 包含 read_paper，必须先调用 read_file/grep 读取 text.md，否则视为幻觉"`。
+
+ 2. **Complex 路径产物接力修复**（`src/paperwise/orchestration/orchestrator.py`）
+    - 旧实现通过 `AgentOrchestrator` 把子 Agent 跑在隔离的 `sub_agents/<name>` 工作目录，导致 Reader 写的 `facts.json`、Writer 期待的 `facts.json` 不在同一目录。
+    - v2 改为直接在 `paper_dir` 中创建并运行子 Agent，所有产物（`facts.json`、`verified.json`、`report/report.md`、`review/findings.md`）共享同一工作区。
+    - 每个子 Agent 运行结束后显式检查 `output_path` 是否存在；缺失则把 `success` 置为 `False`。
+
+ 3. **分类器规则细化**（`src/paperwise/orchestration/classifier.py`）
+    - 新增 `how much / how does / what is the / what are the` 等简单查询关键词。
+    - 新增预规则：针对 `"what metric does this paper report?"` 这类问题直接判为 simple。
+    - 将 `limitation`、`failure cases`、`additional`、`identify` 等偏事实查询词移出强 complex 列表，避免简单事实问题被误判为报告生成任务。
+
+ 4. **子 Agent 直接执行 + 旧编排器清理**
+    - 新增 `src/paperwise/orchestration/specs.py`，集中 `SubAgentSpec`、`PaperAnalysisPipeline`、`parse_findings`。
+    - 删除冗余的 `src/paperwise/agents/orchestrator.py`（旧 `AgentOrchestrator`）。
+    - 子 Agent 不再经过旧的 `AgentOrchestrator.run_pipeline`，由 `SmartOrchestrator._run_sub_agent` 直接创建 `Agent` 运行，避免额外递归和产物隔离。
+
+ 5. **DAG 计划瘦身**
+    - `PaperDAGPlanner` 不再为含 `critical/limitation` 的任务自动加 review 节点；review 只在任务明确要求 `report/pptx` 时触发。
+    - 降低子 Agent 默认 max_steps（reader 12 / verifier 15 / writer 35 / reviewer 25 / revision 35），减少超时。
+    - Writer / Reviewer / Revision 子 Agent 开启 `enable_plan=True`，使 `_looks_complete` 基于产物存在性判定完成。
+
+ 6. **评测入口修复**
+    - `测评/scripts/run_real_evaluation.py` 修复了 `from run_evaluation import ...` 的导入路径（原路径 `workspace/benchmarks` 下没有 `run_evaluation.py`）。
+
+ ## 12. 附录：与 SOTA 的对齐
+
+ - Anthropic *Building Effective Agents*：区分 workflow（预定义）与 agent（动态）。本方案把 simple 任务当作轻量 workflow，complex 任务当作动态 agent DAG。
+ - OpenAI *Harness Engineering*：把设计原则写成 Agent 可读的结构化文档。本方案把复杂度规则、DAG 节点规格写入代码和 `docs/AGENT_ORCHESTRATION_SPEC.md`。
+ - 李博杰《深入理解 AI Agent》：多 Agent 不共享上下文、Manager 调度、对抗审查。本方案复用现有 `AgentOrchestrator` 的 Manager + Worker 设计。
  
  - Anthropic *Building Effective Agents*：区分 workflow（预定义）与 agent（动态）。本方案把 simple 任务当作轻量 workflow，complex 任务当作动态 agent DAG。
  - OpenAI *Harness Engineering*：把设计原则写成 Agent 可读的结构化文档。本方案把复杂度规则、DAG 节点规格写入代码和 `docs/AGENT_ORCHESTRATION_SPEC.md`。
