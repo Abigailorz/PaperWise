@@ -326,19 +326,37 @@ async def get_interests(request: Request):
 
 
 @app.get("/api/recommend")
-async def recommend_papers(request: Request, limit: int = 5):
-    """获取与用户研究方向相关的近期论文（arXiv）。"""
+async def recommend_papers(request: Request, limit: int = 5, session_id: Optional[str] = None):
+    """Return proactive paper recommendations (context-aware if session_id is provided)."""
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
+    from paperwise.memory.research_state import ResearchStateManager
+    from paperwise.memory.proactive_engine import ProactiveEngine
     from paperwise.recommender import PaperRecommender
 
     user_id = request.headers.get("X-User-Id", "default")
-    ws_dir = get_settings().workspace_dir
-    mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
+    ws_dir = Path(get_settings().workspace_dir).resolve()
+    mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory", user_id=user_id)
+
+    # Prefer context-aware proactive recommendations if ResearchState exists
+    if session_id:
+        rsm = ResearchStateManager(ws_dir / f"session_{session_id}", user_id=user_id)
+        state = rsm.get()
+        if state:
+            engine = ProactiveEngine(ws_dir, user_id=user_id)
+            recs = await engine.decide(state, focus_mode=False)
+            return {
+                "topics": [],
+                "papers": [r.to_dict() for r in recs],
+                "cached": False,
+                "ts": time.time(),
+                "source": "proactive_engine",
+            }
+
     recommender = PaperRecommender(ws_dir, memory=mem)
     result = await recommender.recommend(user_id=user_id, limit=min(limit, 10))
+    result["source"] = "paper_recommender"
     return result
-
 
 @app.get("/api/paper/sections")
 async def get_sections(paper_dir: str = Query(...)):
@@ -666,22 +684,47 @@ async def _periodic_flush():
 
 
 async def _push_recommendations_for_session(sid: str) -> bool:
-    """为单个活跃会话生成并推送论文推荐。返回是否成功推送。"""
+    """Push proactive, context-aware paper recommendations for a session."""
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
+    from paperwise.memory.research_state import ResearchStateManager
+    from paperwise.memory.proactive_engine import ProactiveEngine
     from paperwise.recommender import PaperRecommender
 
     session = sessions.get(sid)
     if session is None:
         return False
     user_id = session_user.get(sid, "default")
-    ws_dir = get_settings().workspace_dir
+    ws_dir = Path(get_settings().workspace_dir).resolve()
+
+    result: dict = {}
     try:
-        mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory")
-        recommender = PaperRecommender(ws_dir, memory=mem)
-        result = await recommender.recommend(user_id=user_id, limit=3)
+        # Context-aware path: use ResearchState + ProactiveEngine
+        rsm = ResearchStateManager(ws_dir / f"session_{sid}" / "research_state", user_id=user_id)
+        state = rsm.get()
+        if state and (state.gaps or state.current_task):
+            engine = ProactiveEngine(ws_dir, user_id=user_id)
+            recs = await engine.decide(state, focus_mode=False)
+            if recs:
+                result = {
+                    "papers": [r.to_dict() for r in recs],
+                    "topics": [],
+                    "cached": False,
+                    "source": "proactive_engine",
+                }
     except Exception:
-        return False
+        pass
+
+    # Fallback to legacy PaperRecommender
+    if not result.get("papers"):
+        try:
+            mem = UserMemory(ws_dir / ".paperwise" / user_id / "memory", user_id=user_id)
+            recommender = PaperRecommender(ws_dir, memory=mem)
+            result = await recommender.recommend(user_id=user_id, limit=3)
+            result["source"] = "paper_recommender"
+        except Exception:
+            return False
+
     if not result.get("papers"):
         return False
 

@@ -1,7 +1,33 @@
-"""记忆系统 — 用户记忆 (Advanced JSON Cards) + RAG 知识库
+﻿"""Memory system: Profile + Semantic + Episodic + Procedural + Working Memory + Research State."""
 
-对应书中第 3 章：
-- 3.1 用户记忆：LLM 提取 + 自动去重 + 冲突检测
-- 3.2 RAG：稠密/稀疏嵌入 + RRF 混合检索 + Cross-Encoder 重排序 + HyDE
-- 3.3 结构化索引：RAPTOR 层次树 + GraphRAG 知识图谱 + 多模态检索
-"""
+from paperwise.memory.user_memory import UserMemory, MemoryCard
+from paperwise.memory.knowledge_base import KnowledgeBase
+from paperwise.memory.storage import StorageBackend, SQLiteBackend, JSONFileBackend, create_storage
+from paperwise.memory.episodic_memory import EpisodicMemory, Episode
+from paperwise.memory.procedural_memory import ProceduralMemory, ProceduralPattern
+from paperwise.memory.research_state import ResearchState, ResearchStateManager, Finding, KnowledgeGap
+from paperwise.memory.context_engine import ContextEngine, ContextPackage
+from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation, ProactivePolicy
+
+__all__ = [
+    "UserMemory",
+    "MemoryCard",
+    "KnowledgeBase",
+    "StorageBackend",
+    "SQLiteBackend",
+    "JSONFileBackend",
+    "create_storage",
+    "EpisodicMemory",
+    "Episode",
+    "ProceduralMemory",
+    "ProceduralPattern",
+    "ResearchState",
+    "ResearchStateManager",
+    "Finding",
+    "KnowledgeGap",
+    "ContextEngine",
+    "ContextPackage",
+    "ProactiveEngine",
+    "Recommendation",
+    "ProactivePolicy",
+]

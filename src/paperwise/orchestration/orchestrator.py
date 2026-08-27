@@ -18,6 +18,8 @@ from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
 from paperwise.orchestration.types import GraphState, NodeSpec
 from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow, ExecutionConfig, DAGExecutorError
+from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
+from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -44,6 +46,9 @@ class SmartOrchestrator:
       self.workspace.mkdir(parents=True, exist_ok=True)
       self.base_config = base_config or AgentConfig()
       self.classifier = classifier or TaskClassifier(llm_client, workspace)
+      self.replanner = ReplanAgent()
+      self.research_state_manager = ResearchStateManager(self.workspace, user_id="default")
+      self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.max_review_rounds = max_review_rounds
 
   async def run(self, task: str, paper_dir: Optional[Path] = None) -> AgentResult:
@@ -123,6 +128,11 @@ class SmartOrchestrator:
               error_message="missing_text_md",
           )
 
+      research_state = self.research_state_manager.new(current_task=task)
+      research_state.current_paper = str(paper_dir)
+      research_state.dag_status = "running"
+      self.research_state_manager.save(research_state)
+
       plan = self._build_complex_plan(task)
       state = GraphState(
           task=task,
@@ -161,6 +171,13 @@ class SmartOrchestrator:
 
       try:
           exec_result = await executor.run(plan, state, self._emit_progress)
+          research_state.completed_nodes = list(exec_result.get("completed_nodes", []))
+          research_state.failed_nodes = list(exec_result.get("failed_nodes", []))
+          research_state.gaps = [
+              KnowledgeGap(node_id=n, description=f"Node {n} failed or was replanned")
+              for n in research_state.failed_nodes
+          ]
+          self.research_state_manager.save(research_state)
       except DAGExecutorError as budget_err:
           # Graceful degradation: return whatever artifacts were produced so far.
           return AgentResult(
@@ -215,6 +232,11 @@ class SmartOrchestrator:
               f"{final_findings['major']} major issues after {self.max_review_rounds} rounds]\n\n"
               + final_text
           )
+      recommendations = await self.proactive_engine.decide(research_state)
+      research_state.next_steps = [r.title for r in recommendations]
+      self.research_state_manager.save(research_state)
+      self._write_status(paper_dir, "recommendations", [r.to_dict() for r in recommendations])
+
       return AgentResult(
           final_output=final_text,
           success=success,
@@ -268,6 +290,10 @@ class SmartOrchestrator:
       keywords = [r"\bverify\b", r"\bvalidate\b", r"\bnumerical\b", r"\bcode\b", "验证", "数值", "代码"]
       import re as _re
       return any(_re.search(k, task, _re.IGNORECASE) for k in keywords)
+
+  def _emit(self, event_type: str, message: str) -> None:
+      """Emit an orchestration event; currently a no-op logger."""
+      print(f"[orchestrator:{event_type}] {message}")
 
   def _emit_progress(self, node_id: str, status: str) -> None:
       self._emit("step", f"{node_id}: {status}")

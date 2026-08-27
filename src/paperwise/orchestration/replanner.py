@@ -13,6 +13,9 @@ from paperwise.orchestration.types import GraphState
 class ReplanAgent:
     """Insert recovery / expansion nodes into a running Plan."""
 
+    def __init__(self, llm_client=None):
+        self.llm = llm_client
+
     async def replan(
         self,
         plan: Plan,

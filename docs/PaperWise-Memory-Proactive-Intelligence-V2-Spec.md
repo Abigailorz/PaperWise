@@ -1,4 +1,4 @@
-﻿# PaperWise Memory & Proactive Intelligence V2 Spec
+# PaperWise Memory & Proactive Intelligence V2 Spec
 
 > 版本：V2.0  
 > 目标：把当前独立的 UserMemory / KnowledgeBase / HierarchicalMemory / PaperRecommender 升级为一个围绕“Research State”双向闭环的智能记忆 + 主动推荐系统。  
@@ -369,3 +369,24 @@ V2 不是推翻现有 `UserMemory` / `KnowledgeBase` / `HierarchicalMemory`，�
 3. **Proactive Intelligence** —— 现在该主动帮用户做什么（Proactive Engine）。
 
 三者通过 `ResearchState` 双向闭环：DAG 执行更新 ResearchState，ResearchState 驱动推荐，推荐反馈又更新记忆。这是把 PaperWise 从“论文 RAG + Agent”拉升到“长期研究助手”的关键架构。
+
+
+## Implementation Status
+
+| Component | Status | Files | Notes |
+|---|---|---|---|
+| Memory data model refactor | Done | src/paperwise/memory/user_memory.py, src/paperwise/memory/__init__.py | Added source, status, user_id, last_confirmed_at to MemoryCard; added update_status() and pply_feedback() helpers. |
+| Episodic memory | Done | src/paperwise/memory/episodic_memory.py | Episode + EpisodicMemory with task/query support. |
+| Procedural memory | Done | src/paperwise/memory/procedural_memory.py | ProceduralPattern + ProceduralMemory for learned workflows. |
+| Research state manager | Done | src/paperwise/memory/research_state.py | Tracks ResearchState, KnowledgeGap, active/failed nodes. |
+| Context engine | Done | src/paperwise/memory/context_engine.py | Assembles Profile, Episodic, Procedural, KB, and Working Memory into XML context block. |
+| Proactive engine | Done | src/paperwise/memory/proactive_engine.py | Multi-source recommendations with scoring, policy/throttle, explanations, and feedback loop. |
+| Orchestrator integration | Done | src/paperwise/orchestration/orchestrator.py, src/paperwise/orchestration/dag_executor.py | SmartOrchestrator initializes ResearchStateManager and ProactiveEngine; writes/updates ResearchState before/after DAG execution; infers knowledge gaps from failed nodes; stores proactive recommendations in status. |
+| API integration | Done | src/paperwise/api/server.py | /api/recommend uses ProactiveEngine when a ResearchState exists. |
+| Tests | Done | 	ests/test_memory_v2.py | 6/6 new tests pass; 87/87 existing non-e2e tests pass after fixing SmartOrchestrator regressions. |
+
+### Known divergences / follow-ups
+
+1. **Reviewer loop**: The current DAG uses a single review round followed by an external max_review_rounds loop. A fully dynamic reviewer-loop node inside the DAG is future work.
+2. **E2E tests**: 	ests/test_integration/test_e2e_paper.py has two pre-existing assertion mismatches (steps <= 10 under orchestration, success is False under step-limit) and a judge-homogeneity environment check. These are not introduced by the memory V2 changes.
+3. **Git push**: This commit is ready to push once a GitHub personal access token is available in the environment.

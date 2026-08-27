@@ -27,8 +27,12 @@ class MemoryCard:
     last_verified: str = ""
     tags: list[str] = field(default_factory=list)
     version: int = 1     # 更新版本号
+    source: str = "conversation"   # conversation | explicit | inference | feedback
+    status: str = "active"         # active | stale | conflicting | archived
+    user_id: str = "default"
 
-    def to_dict(self) -> dict: return asdict(self)
+    def to_dict(self) -> dict:
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "MemoryCard":
@@ -46,19 +50,25 @@ class UserMemory:
 
     CATEGORIES = ["preference", "fact", "relationship", "experience", "knowledge"]
 
-    def __init__(self, storage_dir: Path = None, backend: str = "sqlite"):
+    def __init__(self, storage_dir: Path = None, backend: str = "sqlite", user_id: str = "default"):
+        self.user_id = user_id
         self.storage_dir = Path(storage_dir or Path.home() / ".paperwise" / "memory")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         from paperwise.memory.storage import create_storage
         self.store = create_storage(backend, self.storage_dir)
         self.cards: dict[str, MemoryCard] = {}
         self._load()
+        # Tag loaded cards with user_id if missing
+        for card in self.cards.values():
+            if not card.user_id:
+                card.user_id = user_id
 
     # ══════════ CRUD ══════════
 
     def remember(self, category: str, data: dict, backstory: str = "",
                  confidence: float = 0.8, tags: list[str] = None,
-                 person: str = "user", relationship: str = "self") -> MemoryCard:
+                 person: str = "user", relationship: str = "self",
+                 source: str = "conversation", user_id: Optional[str] = None) -> MemoryCard:
         """记住一条信息。自动去重：同类别同 key 的数据会更新而非新增。"""
         import uuid
 
@@ -70,16 +80,24 @@ class UserMemory:
             existing.backstory = backstory or existing.backstory
             existing.confidence = max(existing.confidence, confidence)
             existing.last_verified = datetime.now().isoformat()
+            existing.last_confirmed_at = datetime.now().isoformat()
             existing.version += 1
+            existing.tags = list(set((existing.tags or []) + (tags or [])))
+            if source != "conversation":
+                existing.source = source
+            existing.status = "active"
             existing.tags = list(set((existing.tags or []) + (tags or [])))
             self._save()
             return existing
 
         # 新增
         cid = f"mem_{category}_{uuid.uuid4().hex[:8]}"
-        card = MemoryCard(card_id=cid, category=category, data=data,
-                          backstory=backstory, confidence=confidence,
-                          tags=tags or [], person=person, relationship=relationship)
+        card = MemoryCard(
+            card_id=cid, category=category, data=data,
+            backstory=backstory, confidence=confidence,
+            tags=tags or [], person=person, relationship=relationship,
+            source=source, user_id=(user_id if user_id is not None else self.user_id), status="active",
+        )
         self.cards[cid] = card
         self._save()
         return card
@@ -374,12 +392,32 @@ class UserMemory:
         这类共享 key 名但值不同的卡片误合并。
         """
         for card in self.cards.values():
-            if card.category != category:
+            if card.category != category or card.status == "archived":
                 continue
             for key, value in data.items():
                 if key in card.data and card.data.get(key) == value:
                     return card
         return None
+
+    def update_status(self, card_id: str, status: str) -> bool:
+        """Update memory status (active | stale | conflicting | archived)."""
+        card = self.cards.get(card_id)
+        if not card:
+            return False
+        card.status = status
+        card.last_confirmed_at = datetime.now().isoformat()
+        self._save()
+        return True
+
+    def apply_feedback(self, card_id: str, delta: float) -> bool:
+        """Adjust memory confidence by user feedback."""
+        card = self.cards.get(card_id)
+        if not card:
+            return False
+        card.confidence = max(0.0, min(1.0, card.confidence + delta))
+        card.last_confirmed_at = datetime.now().isoformat()
+        self._save()
+        return True
 
     def _save(self):
         """保存到存储后端（SQLite/JSON）。"""

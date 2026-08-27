@@ -219,12 +219,16 @@ class DAGExecutor:
         success = final_error == "" and plan.done and all(
             t.status == TaskStatus.DONE for t in plan.tasks
         )
+        completed_nodes = [t.id for t in plan.tasks if t.status == TaskStatus.DONE]
+        failed_nodes = [t.id for t in plan.tasks if t.status == TaskStatus.FAILED]
         return {
             "success": success,
             "plan_done": plan.done,
             "steps": total_steps,
             "error_message": final_error,
             "artifacts": dict(state.artifacts),
+            "completed_nodes": completed_nodes,
+            "failed_nodes": failed_nodes,
         }
 
     async def _execute_task(
