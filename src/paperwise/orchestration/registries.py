@@ -1,0 +1,420 @@
+"""Registry layer for the dynamic orchestration system.
+
+Provides CapabilityRegistry, NodeRegistry, WorkflowRegistry, and ArtifactRegistry.
+These registries allow the system to reason about what it can do, which nodes
+exist, which workflow templates are available, and what artifacts they
+produce/consume.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Optional
+
+from paperwise.orchestration.types import (
+    Capability,
+    NodeSpec,
+    WorkflowTemplate,
+    VerificationPolicy,
+)
+
+
+class CapabilityRegistry:
+    """High-level capabilities of the system."""
+
+    def __init__(self) -> None:
+        self._capabilities: dict[str, Capability] = {}
+        self._register_defaults()
+
+    def _register_defaults(self) -> None:
+        self.register(
+            Capability(
+                id="paper_summarize",
+                name="Paper Summarization",
+                description="Produce a concise summary of a single paper.",
+                required_nodes=["parse_pdf", "extract_text", "summarize"],
+                input_artifacts=["PaperArtifact"],
+                output_artifacts=["ReportArtifact"],
+            )
+        )
+        self.register(
+            Capability(
+                id="paper_deep_analysis",
+                name="Paper Deep Analysis",
+                description="Analyze problem, method, experiments, related work and limitations.",
+                required_nodes=[
+                    "parse_pdf",
+                    "problem_analysis",
+                    "method_analysis",
+                    "experiment_analysis",
+                    "related_work_analysis",
+                    "synthesis",
+                ],
+                input_artifacts=["PaperArtifact"],
+                output_artifacts=["MethodArtifact", "ReportArtifact"],
+            )
+        )
+        self.register(
+            Capability(
+                id="paper_to_report",
+                name="Paper to Report",
+                description="Generate a structured Markdown analysis report from a paper.",
+                required_nodes=[
+                    "paper_deep_analysis",
+                    "report_outline",
+                    "report_section",
+                    "report_assemble",
+                    "critic",
+                    "revision",
+                ],
+                input_artifacts=["PaperArtifact"],
+                output_artifacts=["ReportArtifact"],
+            )
+        )
+        self.register(
+            Capability(
+                id="paper_to_ppt",
+                name="Paper to PPT",
+                description="Generate an academic presentation from a paper.",
+                required_nodes=[
+                    "paper_deep_analysis",
+                    "ppt_outline",
+                    "ppt_slide",
+                    "ppt_assemble",
+                ],
+                input_artifacts=["PaperArtifact"],
+                output_artifacts=["SlideArtifact"],
+            )
+        )
+
+    def register(self, capability: Capability) -> None:
+        self._capabilities[capability.id] = capability
+
+    def get(self, capability_id: str) -> Optional[Capability]:
+        return self._capabilities.get(capability_id)
+
+    def list(self) -> list[str]:
+        return list(self._capabilities.keys())
+
+
+class NodeRegistry:
+    """Registry of all executable nodes in the system."""
+
+    def __init__(self) -> None:
+        self._nodes: dict[str, NodeSpec] = {}
+        self._register_defaults()
+
+    def _register_defaults(self) -> None:
+        self.register(
+            NodeSpec(
+                id="parse_pdf",
+                category="input",
+                name="PDF Parser",
+                description="Parse a PDF paper into text, figures, tables and metadata.",
+                input_schema={"pdf_path": "str"},
+                output_schema={"paper": "PaperArtifact"},
+                required_capabilities=["pdf_parsing"],
+                output_path="metadata.json",
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="extract_text",
+                category="extraction",
+                name="Text Extractor",
+                description="Extract structured text sections from a parsed paper.",
+                input_schema={"paper": "PaperArtifact"},
+                output_schema={"sections": "SectionArtifact[]"},
+                required_capabilities=["pdf_parsing"],
+                output_path="sections.json",
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="problem_analysis",
+                category="research",
+                name="Problem Analysis",
+                description="Analyze the problem statement and motivation of the paper.",
+                input_schema={"paper": "PaperArtifact", "sections": "SectionArtifact[]"},
+                output_schema={"problem": "str"},
+                required_capabilities=["long_context"],
+                output_path="facts.json",
+                max_steps=12,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="method_analysis",
+                category="research",
+                name="Method Analysis",
+                description="Analyze the methodology and key ideas of the paper.",
+                input_schema={"paper": "PaperArtifact", "sections": "SectionArtifact[]"},
+                output_schema={"method": "MethodArtifact"},
+                required_capabilities=["long_context"],
+                output_path="facts.json",
+                max_steps=12,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="experiment_analysis",
+                category="research",
+                name="Experiment Analysis",
+                description="Analyze experiments, metrics and results.",
+                input_schema={"paper": "PaperArtifact", "method": "MethodArtifact"},
+                output_schema={"experiment": "dict"},
+                required_capabilities=["long_context"],
+                output_path="facts.json",
+                max_steps=12,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="related_work_analysis",
+                category="research",
+                name="Related Work Analysis",
+                description="Identify and summarize related work referenced by the paper.",
+                input_schema={"paper": "PaperArtifact"},
+                output_schema={"related_work": "list"},
+                required_capabilities=["retrieval"],
+                output_path="facts.json",
+                max_steps=10,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="synthesis",
+                category="reasoning",
+                name="Synthesis",
+                description="Synthesize problem, method and experiments into coherent analysis.",
+                input_schema={
+                    "problem": "str",
+                    "method": "MethodArtifact",
+                    "experiment": "dict",
+                },
+                output_schema={"synthesis": "str"},
+                required_capabilities=["long_context"],
+                output_path="facts.json",
+                max_steps=10,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="evidence_verification",
+                category="reasoning",
+                name="Evidence Verification",
+                description="Verify claims against the paper text with citations.",
+                input_schema={"claims": "ClaimArtifact[]", "paper": "PaperArtifact"},
+                output_schema={"verified_claims": "ClaimArtifact[]"},
+                required_capabilities=["long_context"],
+                output_path="verified.json",
+                max_steps=15,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="report_outline",
+                category="generation",
+                name="Report Outline Generator",
+                description="Generate the outline for the analysis report.",
+                input_schema={"synthesis": "str"},
+                output_schema={"outline": "dict"},
+                required_capabilities=["generation"],
+                output_path="report/outline.json",
+                max_steps=10,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="report_section",
+                category="generation",
+                name="Report Section Writer",
+                description="Write individual sections of the analysis report.",
+                input_schema={"outline": "dict", "facts": "dict"},
+                output_schema={"sections": "dict[str, Path]"},
+                required_capabilities=["generation"],
+                output_path="report/sections",
+                max_steps=15,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="report_assemble",
+                category="generation",
+                name="Report Assembler",
+                description="Assemble sections into the final Markdown report.",
+                input_schema={"sections": "dict[str, Path]"},
+                output_schema={"report": "ReportArtifact"},
+                required_capabilities=["generation"],
+                output_path="report/report.md",
+                max_steps=10,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="ppt_outline",
+                category="generation",
+                name="PPT Outline Generator",
+                description="Generate the outline for the academic slides.",
+                input_schema={"synthesis": "str"},
+                output_schema={"outline": "dict"},
+                required_capabilities=["generation"],
+                output_path="ppt/outline.json",
+                max_steps=10,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="ppt_assemble",
+                category="generation",
+                name="PPT Assembler",
+                description="Assemble slides into the final PPTX file.",
+                input_schema={"slides": "SlideArtifact[]"},
+                output_schema={"presentation": "SlideArtifact[]"},
+                required_capabilities=["generation"],
+                output_path="slides.pptx",
+                max_steps=15,
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="critic",
+                category="verification",
+                name="Critic / Reviewer",
+                description="Adversarially review artifacts for hallucinations and omissions.",
+                input_schema={"report": "ReportArtifact", "paper": "PaperArtifact"},
+                output_schema={"critic_result": "CriticResult"},
+                required_capabilities=["long_context"],
+                output_path="review/findings.json",
+                max_steps=25,
+                verification_policy=VerificationPolicy(required=True, output_exists_check=True),
+            )
+        )
+        self.register(
+            NodeSpec(
+                id="revision",
+                category="generation",
+                name="Revision Writer",
+                description="Revise artifacts based on critic findings.",
+                input_schema={"report": "ReportArtifact", "critic_result": "CriticResult"},
+                output_schema={"report": "ReportArtifact"},
+                required_capabilities=["generation"],
+                output_path="report/report.md",
+                max_steps=35,
+            )
+        )
+
+    def register(self, node: NodeSpec) -> None:
+        self._nodes[node.id] = node
+
+    def get(self, node_id: str) -> Optional[NodeSpec]:
+        return self._nodes.get(node_id)
+
+    def list(self) -> list[str]:
+        return list(self._nodes.keys())
+
+    def by_category(self, category: str) -> list[NodeSpec]:
+        return [n for n in self._nodes.values() if n.category == category]
+
+
+class WorkflowRegistry:
+    """Registry of pre-defined workflow templates."""
+
+    def __init__(self) -> None:
+        self._workflows: dict[str, WorkflowTemplate] = {}
+        self._register_defaults()
+
+    def _register_defaults(self) -> None:
+        self.register(
+            WorkflowTemplate(
+                id="paper_analysis",
+                name="Paper Analysis",
+                description="Deep analysis of a single academic paper.",
+                trigger_intents=["analyze paper", "deep analysis", "paper analysis"],
+                base_dag=[
+                    {"id": "parse_pdf", "depends_on": []},
+                    {"id": "extract_text", "depends_on": ["parse_pdf"]},
+                    {"id": "problem_analysis", "depends_on": ["extract_text"], "parallel_group": "research"},
+                    {"id": "method_analysis", "depends_on": ["extract_text"], "parallel_group": "research"},
+                    {"id": "experiment_analysis", "depends_on": ["method_analysis"], "parallel_group": "research"},
+                    {"id": "related_work_analysis", "depends_on": ["extract_text"], "parallel_group": "research"},
+                    {"id": "synthesis", "depends_on": ["problem_analysis", "method_analysis", "experiment_analysis", "related_work_analysis"]},
+                    {"id": "evidence_verification", "depends_on": ["synthesis"], "condition": "requires_verification"},
+                ],
+                default_artifacts=["PaperArtifact", "MethodArtifact"],
+                dynamic_expandable=True,
+            )
+        )
+        self.register(
+            WorkflowTemplate(
+                id="paper_to_report",
+                name="Paper to Report",
+                description="Generate a structured Markdown report from a paper.",
+                trigger_intents=["generate report", "write report", "report"],
+                base_dag=[
+                    {"id": "paper_analysis", "depends_on": [], "sub_workflow": True},
+                    {"id": "report_outline", "depends_on": ["paper_analysis"]},
+                    {"id": "report_section", "depends_on": ["report_outline"]},
+                    {"id": "report_assemble", "depends_on": ["report_section"]},
+                    {"id": "critic", "depends_on": ["report_assemble"]},
+                    {"id": "revision", "depends_on": ["critic"], "condition": "critic_has_issues"},
+                ],
+                default_artifacts=["ReportArtifact"],
+                dynamic_expandable=True,
+            )
+        )
+        self.register(
+            WorkflowTemplate(
+                id="paper_to_ppt",
+                name="Paper to PPT",
+                description="Generate academic slides from a paper.",
+                trigger_intents=["generate ppt", "generate slides", "ppt", "presentation"],
+                base_dag=[
+                    {"id": "paper_analysis", "depends_on": [], "sub_workflow": True},
+                    {"id": "ppt_outline", "depends_on": ["paper_analysis"]},
+                    {"id": "ppt_assemble", "depends_on": ["ppt_outline"]},
+                    {"id": "critic", "depends_on": ["ppt_assemble"]},
+                    {"id": "revision", "depends_on": ["critic"], "condition": "critic_has_issues"},
+                ],
+                default_artifacts=["SlideArtifact"],
+                dynamic_expandable=True,
+            )
+        )
+
+    def register(self, workflow: WorkflowTemplate) -> None:
+        self._workflows[workflow.id] = workflow
+
+    def get(self, workflow_id: str) -> Optional[WorkflowTemplate]:
+        return self._workflows.get(workflow_id)
+
+    def list(self) -> list[str]:
+        return list(self._workflows.keys())
+
+    def select(self, task_route: Any) -> Optional[WorkflowTemplate]:
+        """Pick a workflow template for a given task route."""
+        return self.get(task_route.workflow)
+
+
+class ArtifactRegistry:
+    """Registry of artifact types and their schemas."""
+
+    ARTIFACT_TYPES: dict[str, type] = {
+        "Artifact": Any,
+        "PaperArtifact": Any,
+        "SectionArtifact": Any,
+        "ClaimArtifact": Any,
+        "MethodArtifact": Any,
+        "ReportArtifact": Any,
+        "SlideArtifact": Any,
+    }
+
+    @classmethod
+    def get_schema(cls, artifact_type: str) -> Optional[type]:
+        return cls.ARTIFACT_TYPES.get(artifact_type)
+
+
+# Global singletons
+CAPABILITY_REGISTRY = CapabilityRegistry()
+NODE_REGISTRY = NodeRegistry()
+WORKFLOW_REGISTRY = WorkflowRegistry()
+ARTIFACT_REGISTRY = ArtifactRegistry()

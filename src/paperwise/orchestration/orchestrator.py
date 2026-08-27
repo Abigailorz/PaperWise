@@ -5,16 +5,20 @@ When ``enable_orchestration`` is false, the legacy single-agent path is used.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from paperwise.core.agent import Agent
 from paperwise.core.types import AgentConfig, AgentResult
 from paperwise.core.plan import Plan
-from paperwise.orchestration.classifier import TaskClassifier, TaskComplexity
+from paperwise.orchestration.classifier import TaskClassifier
 from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
+from paperwise.orchestration.types import GraphState, NodeSpec
+from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow
+from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
 from paperwise.harness.harness import Harness
 
@@ -32,7 +36,7 @@ class SmartOrchestrator:
       workspace: Path,
       base_config: Optional[AgentConfig] = None,
       classifier: Optional[TaskClassifier] = None,
-      max_review_rounds: int = 1,
+      max_review_rounds: int = 3,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -42,12 +46,23 @@ class SmartOrchestrator:
       self.max_review_rounds = max_review_rounds
 
   async def run(self, task: str, paper_dir: Optional[Path] = None) -> AgentResult:
-      """Run a task through the appropriate execution path."""
-      complexity = self.classifier.classify(task)
+      """Run a task through the appropriate execution path.
+
+      Implements a two-stage fallback: tasks classified as ambiguous simple
+      (``escalate_on_failure=True``) first try the fast single-agent path and
+      fall back to the full DAG if that fails.
+      """
+      route = self.classifier.classify(task)
       paper_dir = Path(paper_dir) if paper_dir else self.workspace
 
-      if complexity.is_simple:
+      if route.is_simple and not route.escalate_on_failure:
           return await self._run_simple(task, paper_dir)
+
+      if route.is_simple and route.escalate_on_failure:
+          simple_result = await self._run_simple(task, paper_dir)
+          if simple_result.success and not simple_result.error_message:
+              return simple_result
+          return await self._run_complex(task, paper_dir)
 
       return await self._run_complex(task, paper_dir)
 
@@ -91,18 +106,15 @@ class SmartOrchestrator:
       return agent_result
 
   async def _run_complex(self, task: str, paper_dir: Path) -> AgentResult:
-      """DAG multi-agent execution for complex tasks.
+      """Execute a complex task through the dynamic DAG executor.
 
-      All sub-agents run in the shared ``paper_dir`` workspace so that
-      artifacts (facts.json, verified.json, report/report.md, review/findings.md)
-      are visible to downstream agents.
+      The DAG includes reading, optional verification, analysis, report/PPT
+      generation, adversarial review and revision. Review/revision is repeated
+      up to max_review_rounds until critical/major issues are gone.
       """
-      plan = PaperDAGPlanner.build(task)
-
-      # Ensure the paper directory has the files the sub-agents expect.
-      if not (paper_dir / "text.md").exists() and (self.workspace / "paper" / "text.md").exists():
-          paper_dir = self.workspace / "paper"
-
+      if not (paper_dir / "text.md").exists():
+          if (self.workspace / "paper" / "text.md").exists():
+              paper_dir = self.workspace / "paper"
       if not (paper_dir / "text.md").exists():
           return AgentResult(
               final_output=f"[No paper found] text.md missing in {paper_dir}",
@@ -110,85 +122,223 @@ class SmartOrchestrator:
               error_message="missing_text_md",
           )
 
+      plan = self._build_complex_plan(task)
+      state = GraphState(
+          task=task,
+          budget={
+              "token_limit": self.base_config.token_budget,
+              "step_limit": self.base_config.max_steps,
+          },
+      )
+      state.set_artifact("paper_dir", paper_dir)
+      state.set_artifact("task_text", task)
+
+      executor = DAGExecutor()
+      executor.register_condition("requires_pptx", self._condition_requires_pptx)
+      executor.register_condition("requires_verification", self._condition_requires_verification)
+      executor.register_handler("read_paper", self._handle_read_paper)
+      executor.register_handler("verify_data", self._handle_verify_data)
+      executor.register_handler("analyze_method", self._handle_analyze_method)
+      executor.register_handler("generate_report", self._handle_generate_report)
+      executor.register_handler("generate_pptx", self._handle_generate_pptx)
+      executor.register_handler("review_report", self._handle_review_report)
+      executor.register_handler("revise_report", self._handle_revise_report)
+
       total_steps = 0
-      sub_results: dict[str, AgentResult] = {}
+      final_findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
 
-      # 1. Reader Agent: extract facts into facts.json
-      if plan.get("read_paper"):
-          reader_result = await self._run_reader(task, paper_dir)
-          sub_results["reader"] = reader_result
-          total_steps += reader_result.steps
-          plan.mark_done("read_paper", evidence=str(paper_dir / "facts.json"))
-          if not reader_result.success or not (paper_dir / "facts.json").exists():
-              return AgentResult(
-                  final_output=f"[Reader failed] {reader_result.error_message}",
-                  success=False,
-                  error_message=f"reader_failed: {reader_result.error_message}",
-              )
+      exec_result = await executor.run(plan, state, self._emit_progress)
+      total_steps += exec_result.get("steps", 0)
 
-      # 2. Verifier Agent: verify numerical claims (optional)
-      if plan.get("verify_data"):
-          verifier_result = await self._run_verifier(task, paper_dir)
-          sub_results["verifier"] = verifier_result
-          total_steps += verifier_result.steps
-          plan.mark_done("verify_data", evidence=str(paper_dir / "verified.json"))
-          if not verifier_result.success:
-              self._write_status(paper_dir, "verification_failed", verifier_result.error_message)
-
-      # 3. Writer Agent: produce report / slides
-      writer_result = await self._run_writer(task, paper_dir)
-      sub_results["writer"] = writer_result
-      total_steps += writer_result.steps
-      if plan.get("generate_report"):
-          plan.mark_done("generate_report", evidence=str(paper_dir / "report" / "report.md"))
-      if plan.get("generate_pptx"):
-          plan.mark_done("generate_pptx", evidence="slides.pptx")
-
-      if not writer_result.success or not (paper_dir / "report" / "report.md").exists():
-          return AgentResult(
-              final_output=f"[Writer failed] {writer_result.error_message}",
-              success=False,
-              error_message=f"writer_failed: {writer_result.error_message}",
+      for rnd in range(1, self.max_review_rounds + 1):
+          findings = self._latest_findings(paper_dir)
+          final_findings = findings
+          if findings["critical"] == 0 and findings["major"] == 0:
+              break
+          if rnd >= self.max_review_rounds:
+              break
+          loop_plan = Plan()
+          loop_plan.add(
+              "Adversarially review the output",
+              task_id="review_report",
+              depends_on=[],
           )
+          loop_plan.add(
+              "Revise the output based on review findings",
+              task_id="revise_report",
+              depends_on=["review_report"],
+          )
+          loop_state = GraphState(
+              task=task,
+              budget={
+                  "token_limit": self.base_config.token_budget,
+                  "step_limit": self.base_config.max_steps,
+              },
+          )
+          loop_state.artifacts = state.artifacts.copy()
+          loop_state.set_artifact("paper_dir", paper_dir)
+          loop_state.set_artifact("task_text", task)
+          loop_exec = await executor.run(loop_plan, loop_state, self._emit_progress)
+          total_steps += loop_exec.get("steps", 0)
+          state.artifacts.update(loop_state.artifacts)
 
-      # 4. Review + revision loop
-      if plan.get("review_report"):
-          for rnd in range(1, self.max_review_rounds + 1):
-              review_result = await self._run_reviewer(task, paper_dir)
-              sub_results["reviewer"] = review_result
-              total_steps += review_result.steps
-              plan.mark_done("review_report", evidence=str(paper_dir / "review" / "findings.md"))
-
-              findings_path = paper_dir / "review" / "findings.md"
-              if findings_path.exists():
-                  findings = parse_findings(findings_path)
-              else:
-                  findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0}
-
-              if review_result.success and findings["critical"] == 0 and findings["major"] == 0:
-                  break
-
-              if rnd < self.max_review_rounds:
-                  revision_result = await self._run_revision_writer(task, paper_dir)
-                  sub_results["revision_writer"] = revision_result
-                  total_steps += revision_result.steps
-                  plan.mark_done("revise_report", evidence=f"round{rnd}")
-                  if not revision_result.success or not (paper_dir / "report" / "report.md").exists():
-                      return AgentResult(
-                          final_output=f"[Revision failed] {revision_result.error_message}",
-                          success=False,
-                          error_message=f"revision_failed: {revision_result.error_message}",
-                      )
-
-      # Collect final output
       final_text = self._assemble_final_output(paper_dir)
+      success = final_findings["critical"] == 0 and final_findings["major"] == 0
+      if not success:
+          final_text = (
+              f"[Warning: review left {final_findings['critical']} critical and "
+              f"{final_findings['major']} major issues after {self.max_review_rounds} rounds]\n\n"
+              + final_text
+          )
       return AgentResult(
           final_output=final_text,
-          success=True,
+          success=success,
           steps=total_steps,
           tool_stats={},
       )
 
+  def _build_complex_plan(self, task: str) -> Plan:
+      """Build the dynamic DAG for a complex paper-analysis task."""
+      plan = Plan()
+      plan.add("Read paper and extract facts", task_id="read_paper")
+      plan.add(
+          "Analyze methodology and main claims",
+          task_id="analyze_method",
+          depends_on=["read_paper"],
+          parallel_group="analysis",
+      )
+      plan.add(
+          "Verify numerical claims with code",
+          task_id="verify_data",
+          depends_on=["read_paper"],
+          parallel_group="analysis",
+          condition="requires_verification",
+      )
+      plan.add(
+          "Generate structured analysis report",
+          task_id="generate_report",
+          depends_on=["analyze_method", "verify_data"],
+      )
+      plan.add(
+          "Generate academic presentation slides",
+          task_id="generate_pptx",
+          depends_on=["analyze_method", "verify_data"],
+          condition="requires_pptx",
+      )
+      plan.add(
+          "Adversarially review the output",
+          task_id="review_report",
+          depends_on=["generate_report", "generate_pptx"],
+      )
+      return plan
+
+  def _condition_requires_pptx(self, state: GraphState, _task) -> bool:
+      task = state.get_artifact("task_text") or ""
+      keywords = [r"\bppt\b", r"\bpptx\b", r"\bslides?\b", r"\bpresentation\b", "PPT", "幻灯片"]
+      import re as _re
+      return any(_re.search(k, task, _re.IGNORECASE) for k in keywords)
+
+  def _condition_requires_verification(self, state: GraphState, _task) -> bool:
+      task = state.get_artifact("task_text") or ""
+      keywords = [r"\bverify\b", r"\bvalidate\b", r"\bnumerical\b", r"\bcode\b", "验证", "数值", "代码"]
+      import re as _re
+      return any(_re.search(k, task, _re.IGNORECASE) for k in keywords)
+
+  def _emit_progress(self, node_id: str, status: str) -> None:
+      self._emit("step", f"{node_id}: {status}")
+
+  def _latest_findings(self, paper_dir: Path) -> dict:
+      findings_path = paper_dir / "review" / "findings.md"
+      if findings_path.exists():
+          return parse_findings(findings_path)
+      return {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
+
+  async def _handle_read_paper(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_reader(state.get_artifact("task_text"), paper_dir)
+      if not result.success or not (paper_dir / "facts.json").exists():
+          raise RuntimeError(result.error_message or "reader failed")
+      return paper_dir / "facts.json"
+
+  async def _handle_verify_data(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_verifier(state.get_artifact("task_text"), paper_dir)
+      return paper_dir / "verified.json"
+
+  async def _handle_analyze_method(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      return paper_dir / "facts.json"
+
+  async def _handle_generate_report(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_report_writer(state.get_artifact("task_text"), paper_dir)
+      if not result.success or not (paper_dir / "report" / "report.md").exists():
+          raise RuntimeError(result.error_message or "report writer failed")
+      return paper_dir / "report" / "report.md"
+
+  async def _handle_generate_pptx(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_pptx_writer(state.get_artifact("task_text"), paper_dir)
+      if not result.success or not (paper_dir / "slides.pptx").exists():
+          raise RuntimeError(result.error_message or "pptx writer failed")
+      return paper_dir / "slides.pptx"
+
+  async def _handle_review_report(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_reviewer(state.get_artifact("task_text"), paper_dir)
+      findings = parse_findings(paper_dir / "review" / "findings.md")
+      state.set_artifact("critic_result", findings)
+      return findings
+
+  async def _handle_revise_report(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      result = await self._run_revision_writer(state.get_artifact("task_text"), paper_dir)
+      if not result.success or not (paper_dir / "report" / "report.md").exists():
+          raise RuntimeError(result.error_message or "revision failed")
+      return paper_dir / "report" / "report.md"
+
+  async def _run_report_writer(self, task: str, paper_dir: Path) -> AgentResult:
+      spec = SubAgentSpec(
+          name="report_writer",
+          role="Report Writer",
+          system_prompt=(
+              "You are an academic report writer. Use the extracted facts and verified numbers "
+              "to produce a well-structured analysis. Every factual claim must cite the source. "
+              "If a claim cannot be verified, explicitly mark it as unverified."
+          ),
+          task_template=(
+              f"Write a comprehensive analysis report for the task: {task}\n\n"
+              f"Based on the paper at {paper_dir}.\n\n"
+              "1. Read facts.json and verified.json (if they exist).\n"
+              "2. Write report/sections/*.md and assemble report/report.md.\n"
+              "3. Cite sources as [source: text.md Lxxx-Lyyy]."
+          ),
+          output_path="report/report.md",
+          max_steps=35,
+          enable_plan=True,
+      )
+      return await self._run_sub_agent(spec, paper_dir)
+
+  async def _run_pptx_writer(self, task: str, paper_dir: Path) -> AgentResult:
+      spec = SubAgentSpec(
+          name="pptx_writer",
+          role="Presentation Writer",
+          system_prompt=(
+              "You are an academic presentation writer. Use the extracted facts and verified numbers "
+              "to produce clear slides. Every factual claim must cite the source."
+          ),
+          task_template=(
+              f"Generate academic slides for the task: {task}\n\n"
+              f"Based on the paper at {paper_dir}.\n\n"
+              "1. Read facts.json and verified.json (if they exist).\n"
+              "2. Use skill_load nature-paper2ppt when appropriate, else generate_pptx.\n"
+              "3. Cite sources as [source: text.md Lxxx-Lyyy]."
+          ),
+          allowed_tools=["read_file", "write_file", "edit_file", "apply_patch", "glob", "grep", "generate_pptx", "skill_load", "skill_list"],
+          output_path="slides.pptx",
+          max_steps=35,
+          enable_plan=True,
+      )
   async def _run_reader(self, task: str, paper_dir: Path) -> AgentResult:
       """Run the Reader sub-agent."""
       spec = SubAgentSpec(

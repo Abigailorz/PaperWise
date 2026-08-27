@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Callable, Any
 from enum import Enum
 
 
@@ -21,6 +21,16 @@ class Task:
     depends_on: list[str] = field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
     evidence: str = ""
+    # Dynamic DAG extensions
+    parallel_group: Optional[str] = None
+    condition: Optional[str] = None          # condition name / predicate id
+    condition_fn: Optional[Callable[[Any], bool]] = None
+    retry_count: int = 0
+    max_retries: int = 0
+    output_artifact: Optional[str] = None
+    confidence_threshold: float = 0.0
+    result: Optional[Any] = None
+    error_message: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -37,10 +47,30 @@ class Plan:
     tasks: list[Task] = field(default_factory=list)
     current_task_id: Optional[str] = None
 
-    def add(self, description: str, depends_on: list[str] | None = None,
-            task_id: Optional[str] = None) -> Task:
+    def add(
+        self,
+        description: str,
+        depends_on: list[str] | None = None,
+        task_id: Optional[str] = None,
+        parallel_group: Optional[str] = None,
+        condition: Optional[str] = None,
+        condition_fn: Optional[Callable[[Any], bool]] = None,
+        max_retries: int = 0,
+        output_artifact: Optional[str] = None,
+        confidence_threshold: float = 0.0,
+    ) -> Task:
         tid = task_id or f"task_{len(self.tasks) + 1}"
-        task = Task(id=tid, description=description, depends_on=depends_on or [])
+        task = Task(
+            id=tid,
+            description=description,
+            depends_on=depends_on or [],
+            parallel_group=parallel_group,
+            condition=condition,
+            condition_fn=condition_fn,
+            max_retries=max_retries,
+            output_artifact=output_artifact,
+            confidence_threshold=confidence_threshold,
+        )
         self.tasks.append(task)
         return task
 
@@ -57,6 +87,20 @@ class Plan:
             if all(self.get(dep).status == TaskStatus.DONE for dep in t.depends_on):
                 return t
         return None
+
+    def next_executable_group(self) -> list[Task]:
+        """Return all pending tasks whose dependencies are done, grouped by parallel_group."""
+        ready = [
+            t for t in self.tasks
+            if t.status == TaskStatus.PENDING
+            and all(self.get(dep).status == TaskStatus.DONE for dep in t.depends_on)
+        ]
+        if not ready:
+            return []
+        first_group = ready[0].parallel_group
+        if first_group:
+            return [t for t in ready if t.parallel_group == first_group]
+        return [ready[0]]
 
     def mark_done(self, task_id: str, evidence: str = "") -> bool:
         task = self.get(task_id)
@@ -79,6 +123,14 @@ class Plan:
         if not task:
             return False
         task.status = TaskStatus.FAILED
+        task.evidence = evidence
+        return True
+
+    def mark_needs_replan(self, task_id: str, evidence: str = "") -> bool:
+        task = self.get(task_id)
+        if not task:
+            return False
+        task.status = TaskStatus.NEEDS_REPLAN
         task.evidence = evidence
         return True
 

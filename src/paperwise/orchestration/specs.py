@@ -8,6 +8,7 @@ circular/indirect dependency on the legacy AgentOrchestrator.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +17,10 @@ from typing import Optional
 
 @dataclass
 class SubAgentSpec:
-    """Specification for a single specialist sub-agent."""
+    """Specification for a single specialist sub-agent.
+
+    Aligned with NodeSpec so it can be registered and executed by the DAG Executor.
+    """
 
     name: str
     role: str
@@ -26,6 +30,21 @@ class SubAgentSpec:
     output_path: str = ""
     max_steps: int = 0
     enable_plan: bool = False
+
+    def to_node_spec(self, node_id: str = "", category: str = "") -> NodeSpec:
+        """Convert this sub-agent spec into a standardized NodeSpec."""
+        return NodeSpec(
+            id=node_id or self.name,
+            category=category or "general",
+            name=self.role or self.name,
+            description=self.task_template[:200],
+            system_prompt=self.system_prompt,
+            task_template=self.task_template,
+            allowed_tools=self.allowed_tools,
+            output_path=self.output_path,
+            max_steps=self.max_steps,
+            enable_plan=self.enable_plan,
+        )
 
 
 class PaperAnalysisPipeline:
@@ -67,6 +86,17 @@ What important aspects of the paper did the report miss?
 - REJECT: Critical hallucinations or major omissions
 </output_format>
 
+CRITICAL: In addition to findings.md, also save a machine-readable
+``review/findings.json`` with this exact schema:
+{
+  "verdict": "PASS|REVISE|REJECT",
+  "counts": {"critical": 0, "major": 0, "minor": 0, "flagged": 0},
+  "flagged_claims": [
+    {"quote": "...", "evidence": "...", "severity": "critical|major|minor"}
+  ],
+  "missing_aspects": ["..."]
+}
+
 DO NOT modify the report. Only review and flag.""",
             task_template=f"""Adversarially review the report for the paper at: {paper_dir}
 
@@ -78,7 +108,9 @@ DO NOT modify the report. Only review and flag.""",
    c. If NOT found, flag as potential hallucination
 4. Check numerical claims: re-verify all numbers against the paper
 5. Check completeness: are all important aspects covered?
-6. Save findings to review/findings.md
+6. Save findings to:
+   - review/findings.md (human-readable, using the structure above)
+   - review/findings.json (machine-readable, using the exact JSON schema)
 
 CRITICAL: Be adversarial. If you cannot find evidence for a claim, flag it.
 Do not assume the report is correct. The user depends on your thoroughness.""",
@@ -136,12 +168,57 @@ CRITICAL: Fix what is broken, keep what is correct. Accuracy over speed.""",
 
 
 def parse_findings(findings_path: Path) -> dict:
-    """Parse reviewer findings.md and extract verdict + severity counts.
+    """Parse reviewer findings into a Critic-compatible dict.
+
+    Prefer the machine-readable ``review/findings.json`` if it exists;
+    fall back to parsing ``findings.md`` with regex.
 
     Returns:
         {"verdict": str, "critical": int, "major": int, "minor": int,
-         "flagged": int, "summary": dict}
+         "flagged": int, "summary": dict, "status": str, "severity": dict}
     """
+    default = {
+        "verdict": "UNKNOWN",
+        "critical": 0,
+        "major": 0,
+        "minor": 0,
+        "flagged": 0,
+        "summary": {},
+    }
+
+    json_path = findings_path.with_suffix(".json")
+    if not json_path.exists() and findings_path.name.lower().endswith(".md"):
+        json_path = findings_path.parent / "findings.json"
+
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            counts = data.get("counts", {})
+            summary = {k: v for k, v in data.items() if k not in (
+                "verdict", "counts", "flagged_claims", "missing_aspects"
+            )}
+            summary.update({
+                "Total claims checked": counts.get("total", 0),
+                "Verified": counts.get("verified", 0),
+                "Flagged": counts.get("flagged", 0),
+            })
+            return {
+                "verdict": data.get("verdict", "UNKNOWN").upper(),
+                "status": data.get("status") or data.get("verdict", "UNKNOWN").upper(),
+                "severity": {
+                    "critical": counts.get("critical", 0),
+                    "major": counts.get("major", 0),
+                    "minor": counts.get("minor", 0),
+                },
+                "critical": counts.get("critical", 0),
+                "major": counts.get("major", 0),
+                "minor": counts.get("minor", 0),
+                "flagged": counts.get("flagged", 0),
+                "summary": summary,
+            }
+        except Exception:
+            pass
+
     text = findings_path.read_text(encoding="utf-8", errors="replace")
 
     verdict = "UNKNOWN"
@@ -151,8 +228,8 @@ def parse_findings(findings_path: Path) -> dict:
             verdict = keyword
             break
 
-    flagged_section = text.split("## Flagged Claims", 1)[-1]
-    flagged_section = flagged_section.split("## Missing Aspects", 1)[0]
+    flagged_section = text.split("## Flagged Claims", 1)[-1] if "## Flagged Claims" in text else ""
+    flagged_section = flagged_section.split("## Missing Aspects", 1)[0] if "## Missing Aspects" in flagged_section else flagged_section
     critical = len(re.findall(r"\bcritical\b", flagged_section, re.IGNORECASE))
     major = len(re.findall(r"\bmajor\b", flagged_section, re.IGNORECASE))
     minor = len(re.findall(r"\bminor\b", flagged_section, re.IGNORECASE))
@@ -166,6 +243,8 @@ def parse_findings(findings_path: Path) -> dict:
 
     return {
         "verdict": verdict,
+        "status": verdict,
+        "severity": {"critical": critical, "major": major, "minor": minor},
         "critical": critical,
         "major": major,
         "minor": minor,

@@ -14,28 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-
-class ComplexityLevel(str, Enum):
-    SIMPLE = "simple"
-    COMPLEX = "complex"
-
-
-@dataclass
-class TaskComplexity:
-    """Classification result for a task."""
-
-    level: ComplexityLevel
-    confidence: str  # "high" | "medium" | "low"
-    reason: str = ""
-
-    @property
-    def is_simple(self) -> bool:
-        return self.level == ComplexityLevel.SIMPLE
-
-    @property
-    def is_complex(self) -> bool:
-        return self.level == ComplexityLevel.COMPLEX
-
+from paperwise.orchestration.types import TaskRoute, TaskType, TaskComplexity
 
 class TaskClassifier:
     """Classify a user task as simple or complex.
@@ -53,7 +32,7 @@ class TaskClassifier:
         r"\bvalidat(?:e|ion)\b",
         r"\bnumerical\b",
         r"\bcritical\b",
-        r"\bweakness\b",
+        r"\bweakness(?:es)?\b",
         r"\bdeep critique\b",
         r"\bcompare\b",
         r"\bcomparison\b",
@@ -108,7 +87,7 @@ class TaskClassifier:
     def __init__(self, llm_client=None, workspace: Optional[Path] = None):
         self.llm = llm_client
         self.workspace = workspace
-        self._cache: dict[str, TaskComplexity] = {}
+        self._cache: dict[str, TaskRoute] = {}
         if workspace:
             self._load_cache()
 
@@ -124,8 +103,14 @@ class TaskClassifier:
             or re.search(r"\b(what|which|how)\b.*\breported\b", text, re.IGNORECASE)
         )
 
-    def classify(self, task: str, use_cache: bool = True) -> TaskComplexity:
-        """Classify a task. Cached results are reused when use_cache=True."""
+    def classify(self, task: str, use_cache: bool = True) -> TaskRoute:
+        """Classify a task and return a structured TaskRoute.
+
+        The route carries the execution path (simple/complex), confidence,
+        and an ``escalate_on_failure`` flag for ambiguous tasks that should
+        first try a fast single-agent path but fall back to the DAG if it
+        fails or produces low-confidence output.
+        """
         key = self._cache_key(task)
         if use_cache and key in self._cache:
             return self._cache[key]
@@ -133,18 +118,20 @@ class TaskClassifier:
         text = task.lower().strip()
 
         # Pre-rule: short questions about what the paper reports are simple factual lookups.
-        if self._is_paper_metric_lookup(text) and len(text.split()) <= 45:
-            result = TaskComplexity(
-                level=ComplexityLevel.SIMPLE,
+        is_metric_lookup = self._is_paper_metric_lookup(text)
+        if is_metric_lookup and len(text.split()) <= 45:
+            result = TaskRoute(
+                task_type=TaskType.SIMPLE_QA,
+                complexity=TaskComplexity.SIMPLE,
+                requires_tools=False,
+                requires_planning=False,
+                requires_artifacts=False,
+                workflow="simple_qa",
                 confidence="high",
-                reason="factual lookup: what metric/value the paper reports",
+                escalate_on_failure=False,
             )
-            if use_cache:
-                self._cache[key] = result
-                self._save_cache()
+            self._maybe_cache(key, result, use_cache)
             return result
-
-        complex_hits = sum(1 for p in self._COMPLEX_KEYWORDS if re.search(p, text, re.IGNORECASE))
 
         complex_hits = sum(1 for p in self._COMPLEX_KEYWORDS if re.search(p, text, re.IGNORECASE))
         simple_hits = sum(1 for p in self._SIMPLE_KEYWORDS if re.search(p, text, re.IGNORECASE))
@@ -152,16 +139,28 @@ class TaskClassifier:
 
         # Strong complex rule: any complex keyword -> complex (high confidence)
         if complex_hits > 0:
-            result = TaskComplexity(
-                level=ComplexityLevel.COMPLEX,
+            result = TaskRoute(
+                task_type=TaskType.RESEARCH,
+                complexity=TaskComplexity.COMPLEX,
+                requires_tools=True,
+                requires_planning=True,
+                requires_artifacts=True,
+                workflow="paper_analysis",
                 confidence="high",
+                escalate_on_failure=False,
                 reason=f"matched {complex_hits} complex keyword(s)",
             )
-        # Strong simple rule: simple keyword and no complex keyword AND short or medium
+        # Strong simple rule: simple keyword and no complex keyword AND short
         elif simple_hits > 0 and complex_hits == 0 and len(text.split()) <= 45:
-            result = TaskComplexity(
-                level=ComplexityLevel.SIMPLE,
+            result = TaskRoute(
+                task_type=TaskType.SIMPLE_QA,
+                complexity=TaskComplexity.SIMPLE,
+                requires_tools=False,
+                requires_planning=False,
+                requires_artifacts=False,
+                workflow="simple_qa",
                 confidence="high",
+                escalate_on_failure=False,
                 reason="factual lookup with simple keyword and no artifact keyword",
             )
         # Number-focused factual questions without complex artifact keywords are simple
@@ -170,35 +169,67 @@ class TaskClassifier:
             and complex_hits == 0
             and len(text.split()) <= 50
         ):
-            result = TaskComplexity(
-                level=ComplexityLevel.SIMPLE,
+            result = TaskRoute(
+                task_type=TaskType.SIMPLE_QA,
+                complexity=TaskComplexity.SIMPLE,
+                requires_tools=False,
+                requires_planning=False,
+                requires_artifacts=False,
+                workflow="simple_qa",
                 confidence="high",
-                reason="number-focused factual lookup without complex artifact keywords",
+                escalate_on_failure=True,
+                reason="number-focused factual lookup without complex artifact keywords; escalate if number not found",
             )
-        # Ambiguous: contains analysis/explain/method but no artifact keyword -> medium
-        elif medium_hits > 0 and len(text.split()) <= 20:
-            result = self._llm_classify(task)
+        # Ambiguous: contains analysis/explain/method but no artifact keyword -> simple with DAG fallback
+        elif medium_hits > 0 and complex_hits == 0 and len(text.split()) <= 25:
+            route = TaskRoute(
+                task_type=TaskType.SIMPLE_QA,
+                complexity=TaskComplexity.SIMPLE,
+                requires_tools=False,
+                requires_planning=False,
+                requires_artifacts=False,
+                workflow="simple_qa",
+                confidence="medium",
+                escalate_on_failure=True,
+                reason="analysis keyword without artifact keyword; try simple first, fallback to DAG",
+            )
+            self._maybe_cache(key, route, use_cache)
+            return route
         # Default conservative: complex
         else:
-            result = TaskComplexity(
-                level=ComplexityLevel.COMPLEX,
+            result = TaskRoute(
+                task_type=TaskType.RESEARCH,
+                complexity=TaskComplexity.COMPLEX,
+                requires_tools=True,
+                requires_planning=True,
+                requires_artifacts=True,
+                workflow="paper_analysis",
                 confidence="low",
+                escalate_on_failure=False,
                 reason="no clear simple signal; default to complex",
             )
 
-        if use_cache:
-            self._cache[key] = result
-            self._save_cache()
+        self._maybe_cache(key, result, use_cache)
         return result
 
-    def _llm_classify(self, task: str) -> TaskComplexity:
+    def _maybe_cache(self, key: str, route: TaskRoute, use_cache: bool) -> None:
+        if use_cache:
+            self._cache[key] = route
+            self._save_cache()
+
+    def _llm_classify(self, task: str) -> TaskRoute:
         """Lightweight LLM fallback for ambiguous tasks."""
         if not self.llm:
-            # No LLM available -> conservative complex
-            return TaskComplexity(
-                level=ComplexityLevel.COMPLEX,
-                confidence="low",
-                reason="ambiguous but no LLM available",
+            return TaskRoute(
+                task_type=TaskType.SIMPLE_QA,
+                complexity=TaskComplexity.SIMPLE,
+                requires_tools=False,
+                requires_planning=False,
+                requires_artifacts=False,
+                workflow="simple_qa",
+                confidence="medium",
+                escalate_on_failure=True,
+                reason="ambiguous but no LLM available; try simple first, fallback to DAG",
             )
 
         prompt = (
@@ -221,16 +252,40 @@ class TaskClassifier:
                 data = json.loads(match.group(0))
                 level = data.get("complexity", "complex").lower()
                 reason = data.get("reason", "LLM fallback")
-                return TaskComplexity(
-                    level=ComplexityLevel.SIMPLE if level == "simple" else ComplexityLevel.COMPLEX,
+                if level == "simple":
+                    return TaskRoute(
+                        task_type=TaskType.SIMPLE_QA,
+                        complexity=TaskComplexity.SIMPLE,
+                        requires_tools=False,
+                        requires_planning=False,
+                        requires_artifacts=False,
+                        workflow="simple_qa",
+                        confidence="medium",
+                        escalate_on_failure=True,
+                        reason=reason,
+                    )
+                return TaskRoute(
+                    task_type=TaskType.RESEARCH,
+                    complexity=TaskComplexity.COMPLEX,
+                    requires_tools=True,
+                    requires_planning=True,
+                    requires_artifacts=True,
+                    workflow="paper_analysis",
                     confidence="medium",
+                    escalate_on_failure=False,
                     reason=reason,
                 )
         except Exception:
             pass
-        return TaskComplexity(
-            level=ComplexityLevel.COMPLEX,
+        return TaskRoute(
+            task_type=TaskType.RESEARCH,
+            complexity=TaskComplexity.COMPLEX,
+            requires_tools=True,
+            requires_planning=True,
+            requires_artifacts=True,
+            workflow="paper_analysis",
             confidence="low",
+            escalate_on_failure=False,
             reason="LLM fallback failed; default to complex",
         )
 
@@ -248,11 +303,18 @@ class TaskClassifier:
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 for k, v in raw.items():
-                    self._cache[k] = TaskComplexity(
-                        level=ComplexityLevel(v.get("level", "complex")),
+                    self._cache[k] = TaskRoute(
+                        task_type=TaskType(v.get("task_type", "research")),
+                        complexity=TaskComplexity(v.get("complexity", "complex")),
+                        requires_tools=v.get("requires_tools", False),
+                        requires_planning=v.get("requires_planning", True),
+                        requires_artifacts=v.get("requires_artifacts", True),
+                        workflow=v.get("workflow", "paper_analysis"),
                         confidence=v.get("confidence", "low"),
-                        reason=v.get("reason", ""),
+                        escalate_on_failure=v.get("escalate_on_failure", False),
                     )
+                    if "reason" in v:
+                        self._cache[k].reason = v["reason"]
             except Exception:
                 self._cache = {}
 
@@ -263,7 +325,17 @@ class TaskClassifier:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             raw = {
-                k: {"level": v.level.value, "confidence": v.confidence, "reason": v.reason}
+                k: {
+                    "task_type": v.task_type.value,
+                    "complexity": v.complexity.value,
+                    "requires_tools": v.requires_tools,
+                    "requires_planning": v.requires_planning,
+                    "requires_artifacts": v.requires_artifacts,
+                    "workflow": v.workflow,
+                    "confidence": v.confidence,
+                    "escalate_on_failure": v.escalate_on_failure,
+                    "reason": getattr(v, "reason", ""),
+                }
                 for k, v in self._cache.items()
             }
             path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
