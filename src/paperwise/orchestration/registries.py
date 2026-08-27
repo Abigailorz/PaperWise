@@ -12,8 +12,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 from paperwise.orchestration.types import (
+    Artifact,
     Capability,
+    ClaimArtifact,
+    MethodArtifact,
     NodeSpec,
+    PaperArtifact,
+    ReportArtifact,
+    SectionArtifact,
+    SlideArtifact,
     WorkflowTemplate,
     VerificationPolicy,
 )
@@ -399,13 +406,13 @@ class ArtifactRegistry:
     """Registry of artifact types and their schemas."""
 
     ARTIFACT_TYPES: dict[str, type] = {
-        "Artifact": Any,
-        "PaperArtifact": Any,
-        "SectionArtifact": Any,
-        "ClaimArtifact": Any,
-        "MethodArtifact": Any,
-        "ReportArtifact": Any,
-        "SlideArtifact": Any,
+        "Artifact": Artifact,
+        "PaperArtifact": PaperArtifact,
+        "SectionArtifact": SectionArtifact,
+        "ClaimArtifact": ClaimArtifact,
+        "MethodArtifact": MethodArtifact,
+        "ReportArtifact": ReportArtifact,
+        "SlideArtifact": SlideArtifact,
     }
 
     @classmethod

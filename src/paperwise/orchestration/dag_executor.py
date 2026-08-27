@@ -54,6 +54,48 @@ def _critic_has_issues(state: GraphState) -> bool:
     return False
 
 
+def _node_cost_value(node: Optional[NodeSpec]) -> float:
+    """Map node cost label to a numeric weight for budget allocation."""
+    cost_map = {"low": 1.0, "medium": 3.0, "high": 5.0}
+    if node is None:
+        return cost_map["medium"]
+    return cost_map.get(node.cost, 3.0)
+
+
+class BudgetAllocator:
+    """Split a global token/step budget across nodes in a Plan."""
+
+    @staticmethod
+    def allocate(plan: Plan, total_budget: dict[str, float]) -> dict[str, dict]:
+        """Return a per-node budget map: {node_id: {'token_limit': N, 'step_limit': M}}."""
+        weights = {}
+        for task in plan.tasks:
+            node = NODE_REGISTRY.get(task.id)
+            weights[task.id] = _node_cost_value(node)
+        total_weight = sum(weights.values()) or 1.0
+
+        total_tokens = total_budget.get("token_limit", 180_000)
+        total_steps = total_budget.get("step_limit", 100)
+
+        allocations = {}
+        for task in plan.tasks:
+            share = weights[task.id] / total_weight
+            token_limit = max(1_000, int(total_tokens * share))
+            step_limit = max(5, int(total_steps * share))
+            # Give a node at least as many steps as it declares it may need.
+            node = NODE_REGISTRY.get(task.id)
+            node_steps = node.max_steps if node else 0
+            if node_steps:
+                step_limit = max(step_limit, node_steps)
+            allocations[task.id] = {
+                "token_limit": token_limit,
+                "step_limit": step_limit,
+                "tokens_used": 0,
+                "steps_used": 0,
+            }
+        return allocations
+
+
 @dataclass
 class ExecutionConfig:
     """Runtime configuration for the DAG executor."""
@@ -99,9 +141,20 @@ class DAGExecutor:
             return False
 
     def _node_spec(self, node_id: str) -> NodeSpec:
+        """Return the registered NodeSpec, or a minimal default if unregistered.
+
+        Handlers can run against arbitrary node ids in tests or dynamic plans,
+        so we only require registry entries when node metadata is actually needed.
+        """
         node = NODE_REGISTRY.get(node_id)
         if node is None:
-            raise DAGExecutorError(f"Node {node_id} not registered")
+            return NodeSpec(
+                id=node_id,
+                category="general",
+                name=node_id,
+                description=f"Dynamically registered node {node_id}",
+                cost="medium",
+            )
         return node
 
     async def run(
@@ -118,6 +171,10 @@ class DAGExecutor:
         final_error = ""
 
         try:
+            # Allocate per-node budgets once at the start of execution.
+            if "node_budgets" not in state.budget:
+                state.budget["node_budgets"] = BudgetAllocator.allocate(plan, state.budget)
+
             while not plan.done:
                 if state.is_budget_exhausted():
                     raise DAGExecutorError("Budget exhausted")
@@ -186,11 +243,22 @@ class DAGExecutor:
         task.status = TaskStatus.IN_PROGRESS
         state.log_node(task.id, {"status": "started"})
 
+        # Per-node budget guard
+        node_budgets = state.budget.get("node_budgets", {})
+        nb = node_budgets.get(task.id)
+        if nb and nb.get("steps_used", 0) >= nb.get("step_limit", float("inf")):
+            raise DAGExecutorError(f"Node {task.id} exhausted its step budget")
+
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 handler(node_spec, task, state),
                 timeout=self.config.default_timeout,
             )
+            # Bookkeeping: one DAG execution step per task invocation.
+            if nb:
+                nb["steps_used"] += 1
+            state.budget["steps_used"] = state.budget.get("steps_used", 0) + 1
+            return result
         except asyncio.TimeoutError:
             raise DAGExecutorError(f"Node {task.id} timed out")
 
@@ -255,6 +323,8 @@ class DAGExecutor:
         plan.mark_done(task.id, evidence=str(task.output_artifact or "ok"))
         if progress_callback:
             progress_callback(task.id, "done")
+        # Update global step budget
+        state.budget["steps_used"] = state.budget.get("steps_used", 0) + 1
         return 1
 
 

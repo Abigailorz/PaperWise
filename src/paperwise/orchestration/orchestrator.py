@@ -12,12 +12,13 @@ from typing import Any, Optional
 
 from paperwise.core.agent import Agent
 from paperwise.core.types import AgentConfig, AgentResult
-from paperwise.core.plan import Plan
+from paperwise.core.plan import Plan, Task
 from paperwise.orchestration.classifier import TaskClassifier
 from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
 from paperwise.orchestration.types import GraphState, NodeSpec
-from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow
+from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow, ExecutionConfig, DAGExecutorError
+from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
 from paperwise.harness.harness import Harness
@@ -52,7 +53,7 @@ class SmartOrchestrator:
       (``escalate_on_failure=True``) first try the fast single-agent path and
       fall back to the full DAG if that fails.
       """
-      route = self.classifier.classify(task)
+      route = await self.classifier.classify(task)
       paper_dir = Path(paper_dir) if paper_dir else self.workspace
 
       if route.is_simple and not route.escalate_on_failure:
@@ -133,7 +134,12 @@ class SmartOrchestrator:
       state.set_artifact("paper_dir", paper_dir)
       state.set_artifact("task_text", task)
 
-      executor = DAGExecutor()
+      executor = DAGExecutor(
+          config=ExecutionConfig(
+              enable_replan=True,
+              replan_callback=self._replan,
+          )
+      )
       executor.register_condition("requires_pptx", self._condition_requires_pptx)
       executor.register_condition("requires_verification", self._condition_requires_verification)
       executor.register_handler("read_paper", self._handle_read_paper)
@@ -143,11 +149,30 @@ class SmartOrchestrator:
       executor.register_handler("generate_pptx", self._handle_generate_pptx)
       executor.register_handler("review_report", self._handle_review_report)
       executor.register_handler("revise_report", self._handle_revise_report)
+      # Corrective nodes produced by ReplanAgent
+      executor.register_handler("re_read_section", self._handle_read_paper)
+      executor.register_handler("re_verify_with_code", self._handle_verify_data)
+      executor.register_handler("revision", self._handle_revise_report)
+      executor.register_handler("expand_evidence", self._handle_analyze_method)
+      executor.register_handler("dynamic_research", self._handle_analyze_method)
 
       total_steps = 0
       final_findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
 
-      exec_result = await executor.run(plan, state, self._emit_progress)
+      try:
+          exec_result = await executor.run(plan, state, self._emit_progress)
+      except DAGExecutorError as budget_err:
+          # Graceful degradation: return whatever artifacts were produced so far.
+          return AgentResult(
+              final_output=(
+                  f"[Budget or execution limit reached: {budget_err}]\n\n"
+                  + self._assemble_final_output(paper_dir)
+              ),
+              success=False,
+              error_message=str(budget_err),
+              steps=total_steps + state.budget.get("steps_used", 0),
+              tool_stats={},
+          )
       total_steps += exec_result.get("steps", 0)
 
       for rnd in range(1, self.max_review_rounds + 1):
@@ -247,6 +272,10 @@ class SmartOrchestrator:
   def _emit_progress(self, node_id: str, status: str) -> None:
       self._emit("step", f"{node_id}: {status}")
 
+  async def _replan(self, plan: Plan, failed_task: Task, reason: str, state: GraphState) -> Plan:
+      """Dynamic replan hook used by DAGExecutor."""
+      return await self.replanner.replan(plan, failed_task, reason, state)
+
   def _latest_findings(self, paper_dir: Path) -> dict:
       findings_path = paper_dir / "review" / "findings.md"
       if findings_path.exists():
@@ -258,12 +287,23 @@ class SmartOrchestrator:
       result = await self._run_reader(state.get_artifact("task_text"), paper_dir)
       if not result.success or not (paper_dir / "facts.json").exists():
           raise RuntimeError(result.error_message or "reader failed")
+      am = ArtifactManager(paper_dir)
+      paper, method = am.from_facts_json(paper_dir / "facts.json")
+      am.save("paper", paper)
+      am.save("method", method)
+      state.set_artifact("paper_artifact", paper)
+      state.set_artifact("method_artifact", method)
       return paper_dir / "facts.json"
 
   async def _handle_verify_data(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_verifier(state.get_artifact("task_text"), paper_dir)
-      return paper_dir / "verified.json"
+      verified_path = paper_dir / "verified.json"
+      am = ArtifactManager(paper_dir)
+      verified_claims = am.from_verified_json(verified_path)
+      am.save("verified_claims", verified_claims)
+      state.set_artifact("verified_claims", verified_claims)
+      return verified_path
 
   async def _handle_analyze_method(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
@@ -272,16 +312,26 @@ class SmartOrchestrator:
   async def _handle_generate_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_report_writer(state.get_artifact("task_text"), paper_dir)
-      if not result.success or not (paper_dir / "report" / "report.md").exists():
+      report_path = paper_dir / "report" / "report.md"
+      if not result.success or not report_path.exists():
           raise RuntimeError(result.error_message or "report writer failed")
-      return paper_dir / "report" / "report.md"
+      am = ArtifactManager(paper_dir)
+      report_artifact = am.from_report(report_path)
+      am.save("report", report_artifact)
+      state.set_artifact("report_artifact", report_artifact)
+      return report_path
 
   async def _handle_generate_pptx(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_pptx_writer(state.get_artifact("task_text"), paper_dir)
-      if not result.success or not (paper_dir / "slides.pptx").exists():
+      pptx_path = paper_dir / "slides.pptx"
+      if not result.success or not pptx_path.exists():
           raise RuntimeError(result.error_message or "pptx writer failed")
-      return paper_dir / "slides.pptx"
+      am = ArtifactManager(paper_dir)
+      slide_artifact = am.from_pptx(pptx_path)
+      am.save("slides", slide_artifact)
+      state.set_artifact("slide_artifact", slide_artifact)
+      return pptx_path
 
   async def _handle_review_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
@@ -293,9 +343,14 @@ class SmartOrchestrator:
   async def _handle_revise_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_revision_writer(state.get_artifact("task_text"), paper_dir)
-      if not result.success or not (paper_dir / "report" / "report.md").exists():
+      report_path = paper_dir / "report" / "report.md"
+      if not result.success or not report_path.exists():
           raise RuntimeError(result.error_message or "revision failed")
-      return paper_dir / "report" / "report.md"
+      am = ArtifactManager(paper_dir)
+      report_artifact = am.from_report(report_path)
+      am.save("report", report_artifact)
+      state.set_artifact("report_artifact", report_artifact)
+      return report_path
 
   async def _run_report_writer(self, task: str, paper_dir: Path) -> AgentResult:
       spec = SubAgentSpec(

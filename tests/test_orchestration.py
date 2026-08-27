@@ -37,39 +37,39 @@ def tmp_workspace(tmp_path):
     return ws
 
 
-def test_classify_simple_fact_lookup(tmp_workspace):
+async def test_classify_simple_fact_lookup(tmp_workspace):
     clf = TaskClassifier()
-    route = clf.classify("What is the main contribution of this paper?")
+    route = await clf.classify("What is the main contribution of this paper?")
     assert route.complexity == TaskComplexity.SIMPLE
     assert route.confidence == "high"
     assert route.escalate_on_failure is False
     assert route.task_type == TaskType.SIMPLE_QA
 
 
-def test_classify_complex_report(tmp_workspace):
+async def test_classify_complex_report(tmp_workspace):
     clf = TaskClassifier()
-    route = clf.classify("Write a comprehensive analysis report with citations.")
+    route = await clf.classify("Write a comprehensive analysis report with citations.")
     assert route.complexity == TaskComplexity.COMPLEX
     assert route.confidence == "high"
     assert route.requires_artifacts is True
 
 
-def test_classify_complex_verify(tmp_workspace):
+async def test_classify_complex_verify(tmp_workspace):
     clf = TaskClassifier()
-    route = clf.classify("Verify the numerical claims in the experiments.")
+    route = await clf.classify("Verify the numerical claims in the experiments.")
     assert route.complexity == TaskComplexity.COMPLEX
 
 
-def test_classify_complex_critical(tmp_workspace):
+async def test_classify_complex_critical(tmp_workspace):
     clf = TaskClassifier()
-    route = clf.classify("What are the limitations and weaknesses?")
+    route = await clf.classify("What are the limitations and weaknesses?")
     assert route.complexity == TaskComplexity.COMPLEX
 
 
-def test_classify_ambiguous_escalates(tmp_workspace):
+async def test_classify_ambiguous_escalates(tmp_workspace):
     """Medium-hint short tasks should try simple path first, with DAG fallback."""
     clf = TaskClassifier()
-    route = clf.classify("Explain the method.")
+    route = await clf.classify("Explain the method.")
     assert route.complexity == TaskComplexity.SIMPLE
     assert route.escalate_on_failure is True
 
@@ -154,7 +154,7 @@ def test_smart_orchestrator_escalates_on_failure(tmp_workspace):
             base_config=AgentConfig(
                 name="test", system_prompt="You are a paper analyst.", max_steps=5),
         )
-        route = orchestrator.classifier.classify("Explain the method.")
+        route = await orchestrator.classifier.classify("Explain the method.")
         assert route.complexity == TaskComplexity.SIMPLE
         assert route.escalate_on_failure is True
 

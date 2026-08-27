@@ -103,7 +103,7 @@ class TaskClassifier:
             or re.search(r"\b(what|which|how)\b.*\breported\b", text, re.IGNORECASE)
         )
 
-    def classify(self, task: str, use_cache: bool = True) -> TaskRoute:
+    async def classify(self, task: str, use_cache: bool = True) -> TaskRoute:
         """Classify a task and return a structured TaskRoute.
 
         The route carries the execution path (simple/complex), confidence,
@@ -217,7 +217,7 @@ class TaskClassifier:
             self._cache[key] = route
             self._save_cache()
 
-    def _llm_classify(self, task: str) -> TaskRoute:
+    async def _llm_classify(self, task: str) -> TaskRoute:
         """Lightweight LLM fallback for ambiguous tasks."""
         if not self.llm:
             return TaskRoute(
@@ -241,7 +241,7 @@ class TaskClassifier:
             'Reply with JSON only: {"complexity": "simple|complex", "reason": "..."}'
         )
         try:
-            resp = self.llm.chat(
+            resp = await self.llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=60,

@@ -1011,3 +1011,25 @@ Paper Workflow
 3. 实现按节点预算分配与耗尽时的 graceful degradation。
 4. 迁移 `facts.json / verified.json` 为 `artifacts/` 下的 Pydantic Artifact 文件。
 5. 增加端到端冒烟测试：Mini-DAG（验证 + 报告）和 Full-DAG（报告 + PPT + Review）。
+
+## 18. v0.5.2 完整实现补充
+
+### 已实现补充项
+
+- **分类器 LLM 回退**：`TaskClassifier.classify()` 已改为 `async`，`_llm_classify()` 通过 `await self.llm.chat(...)` 接入异步 LLM 客户端，并保留规则优先、LLM 兜底的两级决策。所有调用方（`SmartOrchestrator`、测试）已改为 `await`。
+- **ReplanAgent 集成**：`SmartOrchestrator._run_complex()` 创建 `DAGExecutor` 时启用 `enable_replan=True` 并绑定 `ReplanAgent.replan`。DAGExecutor 在节点失败或低置信度时触发 replan，动态插入 `re_read_section`、`re_verify_with_code`、`revision`、`expand_evidence`、`dynamic_research` 等纠正节点。
+- **Artifact 标准化**：新增 `src/paperwise/orchestration/artifact_manager.py`，把 `facts.json`/`verified.json`/`report/report.md`/`slides.pptx` 转换为 `PaperArtifact`、`MethodArtifact`、`ClaimArtifact`、`ReportArtifact`、`SlideArtifact`，统一写入 `workspace/{paper_id}/artifacts/`。`ArtifactRegistry` 已映射到真实类型。
+- **按节点预算分配与优雅降级**：`DAGExecutor` 新增 `BudgetAllocator`，按节点 `cost` 权重把全局 token/step 预算拆分到每个节点，执行时更新全局与节点预算。预算耗尽时 `SmartOrchestrator` 不再崩溃，而是返回已生成产物的部分结果并标注原因。
+- **端到端 DAG 冒烟测试**：新增 `tests/test_dag_executor.py`，覆盖线性 DAG、并行组、条件跳过、动态 replan、预算耗尽五条路径。
+
+### 已修复问题
+
+- `TaskClassifier` 内部去掉了旧的 `ComplexityLevel`/`TaskComplexity` dataclass 定义，统一使用 `orchestration.types` 中的 `TaskComplexity` enum 和 `TaskRoute`。
+- `DAGExecutor._node_spec()` 对未注册节点提供默认 `NodeSpec`，避免动态测试/动态计划因节点未注册直接失败。
+- 修复了预算分配代码中误用 `task.max_steps` 为不存在字段的问题，改为读取注册表中的 `NodeSpec.max_steps`。
+
+### 仍然存在的限制
+
+- `ReplanAgent` 当前基于规则选择纠正节点；未来可接入 LLM 让 replan 策略更智能。
+- Artifact 目录已标准化，但 Reader/Verifier/Writer 的 prompt 里尚未显式要求以 `artifacts/*.json` 为唯一交换格式，仍兼容原文件路径。
+- 按节点 token 预算目前仅做步数折算，未精确统计 LLM token；后续可接入 `AgentResult.tokens_used` 做真实扣减。
