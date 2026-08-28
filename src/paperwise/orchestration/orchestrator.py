@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from paperwise.core.agent import Agent
-from paperwise.core.types import AgentConfig, AgentResult
+from paperwise.core.types import AgentConfig, AgentResult, TraceEventType
 from paperwise.core.plan import Plan, Task
+from paperwise.core.trace_collector import TraceCollector, create_trace_collector
 from paperwise.orchestration.classifier import TaskClassifier
 from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
@@ -40,6 +41,7 @@ class SmartOrchestrator:
       base_config: Optional[AgentConfig] = None,
       classifier: Optional[TaskClassifier] = None,
       max_review_rounds: int = 3,
+      trace_collector: Optional[TraceCollector] = None,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -50,6 +52,7 @@ class SmartOrchestrator:
       self.research_state_manager = ResearchStateManager(self.workspace, user_id="default")
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.max_review_rounds = max_review_rounds
+      self.trace_collector = trace_collector or create_trace_collector(enabled=False)
 
   async def run(self, task: str, paper_dir: Optional[Path] = None) -> AgentResult:
       """Run a task through the appropriate execution path.
@@ -58,19 +61,56 @@ class SmartOrchestrator:
       (``escalate_on_failure=True``) first try the fast single-agent path and
       fall back to the full DAG if that fails.
       """
+      trace = self.trace_collector.start_trace(
+          task=task,
+          metadata={"source": "orchestrator", "workspace": str(self.workspace)},
+      )
       route = await self.classifier.classify(task)
+      self.trace_collector.add_event(
+          TraceEventType.ROUTER_DECISION,
+          data={"route": self._route_to_dict(route)},
+      )
       paper_dir = Path(paper_dir) if paper_dir else self.workspace
 
-      if route.is_simple and not route.escalate_on_failure:
-          return await self._run_simple(task, paper_dir)
+      try:
+          if route.is_simple and not route.escalate_on_failure:
+              result = await self._run_simple(task, paper_dir)
+          elif route.is_simple and route.escalate_on_failure:
+              simple_result = await self._run_simple(task, paper_dir)
+              if simple_result.success and not simple_result.error_message:
+                  result = simple_result
+              else:
+                  result = await self._run_complex(task, paper_dir)
+          else:
+              result = await self._run_complex(task, paper_dir)
 
-      if route.is_simple and route.escalate_on_failure:
-          simple_result = await self._run_simple(task, paper_dir)
-          if simple_result.success and not simple_result.error_message:
-              return simple_result
-          return await self._run_complex(task, paper_dir)
+          result.trace_id = trace.trace_id
+          self.trace_collector.end_trace(result)
+          return result
+      except Exception as e:
+          self.trace_collector.add_event(
+              TraceEventType.ERROR,
+              data={"exception": type(e).__name__, "message": str(e)},
+          )
+          result = AgentResult(
+              final_output=f"[Orchestrator error: {e}]",
+              success=False, error_message=str(e),
+          )
+          result.trace_id = trace.trace_id
+          self.trace_collector.end_trace(result)
+          return result
 
-      return await self._run_complex(task, paper_dir)
+  @staticmethod
+  def _route_to_dict(route) -> dict:
+      """将 TaskRoute 转为可序列化字典。"""
+      return {
+          "task_type": getattr(route, "task_type", "").value if hasattr(getattr(route, "task_type", ""), "value") else str(getattr(route, "task_type", "")),
+          "complexity": getattr(route, "complexity", "").value if hasattr(getattr(route, "complexity", ""), "value") else str(getattr(route, "complexity", "")),
+          "workflow": getattr(route, "workflow", ""),
+          "confidence": getattr(route, "confidence", ""),
+          "reason": getattr(route, "reason", ""),
+          "escalate_on_failure": getattr(route, "escalate_on_failure", False),
+      }
 
   async def _run_simple(self, task: str, paper_dir: Path) -> AgentResult:
       """Lightweight single-agent execution for simple Q&A."""
@@ -134,6 +174,10 @@ class SmartOrchestrator:
       self.research_state_manager.save(research_state)
 
       plan = self._build_complex_plan(task)
+      self.trace_collector.add_event(
+          TraceEventType.PLAN_GENERATED,
+          data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks]},
+      )
       state = GraphState(
           task=task,
           budget={
@@ -148,7 +192,8 @@ class SmartOrchestrator:
           config=ExecutionConfig(
               enable_replan=True,
               replan_callback=self._replan,
-          )
+          ),
+          trace_collector=self.trace_collector,
       )
       executor.register_condition("requires_pptx", self._condition_requires_pptx)
       executor.register_condition("requires_verification", self._condition_requires_verification)
@@ -297,6 +342,25 @@ class SmartOrchestrator:
 
   def _emit_progress(self, node_id: str, status: str) -> None:
       self._emit("step", f"{node_id}: {status}")
+      event_map = {
+          "started": TraceEventType.NODE_START,
+          "done": TraceEventType.NODE_DONE,
+          "failed": TraceEventType.NODE_FAILED,
+          "replan": TraceEventType.REPLAN,
+      }
+      event_type = event_map.get(status)
+      if event_type:
+          self.trace_collector.add_event(
+              event_type,
+              data={"node_id": node_id, "status": status},
+              node_id=node_id,
+          )
+      elif status.startswith("retry_"):
+          self.trace_collector.add_event(
+              TraceEventType.RETRY,
+              data={"node_id": node_id, "status": status},
+              node_id=node_id,
+          )
 
   async def _replan(self, plan: Plan, failed_task: Task, reason: str, state: GraphState) -> Plan:
       """Dynamic replan hook used by DAGExecutor."""
@@ -542,6 +606,7 @@ class SmartOrchestrator:
           llm_client=self.llm,
           harness=harness,
           workspace_dir=paper_dir,
+          trace_collector=self.trace_collector,
       )
 
       result = await agent.run(spec.task_template)

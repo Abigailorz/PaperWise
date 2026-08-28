@@ -103,14 +103,22 @@ class HallucinationDetector:
                     "summary": f"Detection error (treated as unknown): {type(e).__name__}"}
 
 
-__all__ = ["RubricEvaluator", "HallucinationDetector", "RubricDimension", "EvaluationResult"]
-from paperwise.evaluation.graders import (
-    Grader, GradeResult, CodeGrader, RubricGrader,
-    HallucinationGrader, TranscriptMetrics, CompositeGrader,
-)
-
 __all__ = [
     "RubricEvaluator", "HallucinationDetector", "RubricDimension", "EvaluationResult",
     "Grader", "GradeResult", "CodeGrader", "RubricGrader",
     "HallucinationGrader", "TranscriptMetrics", "CompositeGrader",
+    "TraceStore", "TraceEvaluator", "TraceMetricsExtractor",
+    "RoutingGrader", "PlanningGrader", "RetrievalGrader",
+    "EvidenceGrader", "ToolUsageGrader", "ExecutionGrader", "TraceCompositeGrader",
 ]
+
+from paperwise.evaluation.graders import (
+    Grader, GradeResult, CodeGrader, RubricGrader,
+    HallucinationGrader, TranscriptMetrics, CompositeGrader,
+)
+from paperwise.evaluation.trace_store import TraceStore
+from paperwise.evaluation.trace_evaluator import (
+    TraceEvaluator, TraceMetricsExtractor,
+    RoutingGrader, PlanningGrader, RetrievalGrader,
+    EvidenceGrader, ToolUsageGrader, ExecutionGrader, TraceCompositeGrader,
+)

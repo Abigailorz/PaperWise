@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from paperwise.core.plan import Plan, Task, TaskStatus
+from paperwise.core.types import TraceEventType
+from paperwise.core.trace_collector import TraceCollector, NullTraceCollector
 from paperwise.orchestration.types import GraphState, CriticResult, NodeSpec
 from paperwise.orchestration.registries import NODE_REGISTRY
 
@@ -104,6 +106,7 @@ class ExecutionConfig:
     default_timeout: float = 300.0
     enable_replan: bool = False
     replan_callback: Optional[Callable[[Plan, Task, str, GraphState], Awaitable[Plan]]] = None
+    trace_collector: Optional[TraceCollector] = None
 
 
 class DAGExecutor:
@@ -120,6 +123,7 @@ class DAGExecutor:
         self.config = config or ExecutionConfig()
         self._handlers: dict[str, NodeHandler] = {}
         self._conditions: dict[str, ConditionFn] = dict(DEFAULT_CONDITIONS)
+        self.trace_collector = self.config.trace_collector or NullTraceCollector()
 
     def register_handler(self, node_id: str, handler: NodeHandler) -> None:
         self._handlers[node_id] = handler
@@ -169,6 +173,10 @@ class DAGExecutor:
         """
         total_steps = 0
         final_error = ""
+        self.trace_collector.add_event(
+            TraceEventType.TRACE_START,
+            data={"source": "dag_executor", "task_count": len(plan.tasks)},
+        )
 
         try:
             # Allocate per-node budgets once at the start of execution.
@@ -187,13 +195,21 @@ class DAGExecutor:
 
                 # Skip tasks whose condition is false.
                 to_run: list[Task] = []
+                skipped: list[str] = []
                 for task in ready:
                     if self._should_skip(task, state):
                         plan.mark_done(task.id, evidence="skipped_by_condition")
+                        skipped.append(task.id)
                         if progress_callback:
                             progress_callback(task.id, "skipped")
                     else:
                         to_run.append(task)
+
+                if skipped:
+                    self.trace_collector.add_event(
+                        TraceEventType.COMPRESSION,
+                        data={"skipped_nodes": skipped, "reason": "condition_false"},
+                    )
 
                 if not to_run:
                     continue
@@ -203,9 +219,17 @@ class DAGExecutor:
                         progress_callback(task.id, "started")
 
                 # Execute the group in parallel.
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_START,
+                    data={"parallel_group": [t.id for t in to_run]},
+                )
                 results = await asyncio.gather(
                     *[self._execute_task(task, state, progress_callback) for task in to_run],
                     return_exceptions=True,
+                )
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_END,
+                    data={"parallel_group": [t.id for t in to_run]},
                 )
 
                 for task, result in zip(to_run, results):
@@ -215,13 +239,17 @@ class DAGExecutor:
 
         except DAGExecutorError as e:
             final_error = str(e)
+            self.trace_collector.add_event(
+                TraceEventType.ERROR,
+                data={"exception": "DAGExecutorError", "message": final_error},
+            )
 
         success = final_error == "" and plan.done and all(
             t.status == TaskStatus.DONE for t in plan.tasks
         )
         completed_nodes = [t.id for t in plan.tasks if t.status == TaskStatus.DONE]
         failed_nodes = [t.id for t in plan.tasks if t.status == TaskStatus.FAILED]
-        return {
+        result_dict = {
             "success": success,
             "plan_done": plan.done,
             "steps": total_steps,
@@ -230,6 +258,11 @@ class DAGExecutor:
             "completed_nodes": completed_nodes,
             "failed_nodes": failed_nodes,
         }
+        self.trace_collector.add_event(
+            TraceEventType.TRACE_END,
+            data={"success": success, "completed_nodes": completed_nodes, "failed_nodes": failed_nodes},
+        )
+        return result_dict
 
     async def _execute_task(
         self,
@@ -246,6 +279,11 @@ class DAGExecutor:
         node_spec = self._node_spec(task.id)
         task.status = TaskStatus.IN_PROGRESS
         state.log_node(task.id, {"status": "started"})
+        start_event = self.trace_collector.add_event(
+            TraceEventType.NODE_START,
+            data={"node_id": task.id, "description": task.description},
+            node_id=task.id,
+        )
 
         # Per-node budget guard
         node_budgets = state.budget.get("node_budgets", {})
@@ -253,18 +291,46 @@ class DAGExecutor:
         if nb and nb.get("steps_used", 0) >= nb.get("step_limit", float("inf")):
             raise DAGExecutorError(f"Node {task.id} exhausted its step budget")
 
+        t0 = time.time()
         try:
             result = await asyncio.wait_for(
                 handler(node_spec, task, state),
                 timeout=self.config.default_timeout,
             )
+            latency_ms = (time.time() - t0) * 1000
             # Bookkeeping: one DAG execution step per task invocation.
             if nb:
                 nb["steps_used"] += 1
             state.budget["steps_used"] = state.budget.get("steps_used", 0) + 1
+            self.trace_collector.add_event(
+                TraceEventType.NODE_END,
+                data={
+                    "node_id": task.id,
+                    "result_type": type(result).__name__,
+                    "latency_ms": round(latency_ms, 2),
+                },
+                node_id=task.id,
+                parent_event_id=start_event.event_id if start_event else None,
+                latency_ms=latency_ms,
+            )
             return result
         except asyncio.TimeoutError:
+            latency_ms = (time.time() - t0) * 1000
+            self.trace_collector.add_event(
+                TraceEventType.NODE_FAILED,
+                data={"node_id": task.id, "reason": "timeout", "latency_ms": round(latency_ms, 2)},
+                node_id=task.id,
+                parent_event_id=start_event.event_id if start_event else None,
+            )
             raise DAGExecutorError(f"Node {task.id} timed out")
+        except Exception as e:
+            self.trace_collector.add_event(
+                TraceEventType.NODE_FAILED,
+                data={"node_id": task.id, "reason": str(e)},
+                node_id=task.id,
+                parent_event_id=start_event.event_id if start_event else None,
+            )
+            raise
 
     async def _process_result(
         self,
@@ -285,6 +351,11 @@ class DAGExecutor:
 
             if task.retry_count <= task.max_retries:
                 task.status = TaskStatus.PENDING
+                self.trace_collector.add_event(
+                    TraceEventType.RETRY,
+                    data={"node_id": task.id, "attempt": task.retry_count, "error": str(result)},
+                    node_id=task.id,
+                )
                 if progress_callback:
                     progress_callback(task.id, f"retry_{task.retry_count}")
                 return 1
@@ -293,6 +364,11 @@ class DAGExecutor:
                 try:
                     new_plan = await self.config.replan_callback(plan, task, str(result), state)
                     plan.tasks = new_plan.tasks
+                    self.trace_collector.add_event(
+                        TraceEventType.REPLAN,
+                        data={"node_id": task.id, "reason": str(result)},
+                        node_id=task.id,
+                    )
                     if progress_callback:
                         progress_callback(task.id, "replan")
                     return 1
@@ -300,6 +376,11 @@ class DAGExecutor:
                     task.error_message = f"replan_failed: {replan_err}"
 
             plan.mark_failed(task.id, evidence=str(result))
+            self.trace_collector.add_event(
+                TraceEventType.NODE_FAILED,
+                data={"node_id": task.id, "reason": str(result), "final": True},
+                node_id=task.id,
+            )
             if progress_callback:
                 progress_callback(task.id, "failed")
             return 1
@@ -320,11 +401,21 @@ class DAGExecutor:
                     plan, task, f"confidence {confidence} < threshold {task.confidence_threshold}", state
                 )
                 plan.tasks = new_plan.tasks
+                self.trace_collector.add_event(
+                    TraceEventType.REPLAN,
+                    data={"node_id": task.id, "reason": f"low_confidence_{confidence}"},
+                    node_id=task.id,
+                )
                 if progress_callback:
                     progress_callback(task.id, "replan_low_confidence")
                 return 1
 
         plan.mark_done(task.id, evidence=str(task.output_artifact or "ok"))
+        self.trace_collector.add_event(
+            TraceEventType.NODE_DONE,
+            data={"node_id": task.id, "artifact": task.output_artifact},
+            node_id=task.id,
+        )
         if progress_callback:
             progress_callback(task.id, "done")
         # Update global step budget

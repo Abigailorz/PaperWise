@@ -26,10 +26,12 @@ from typing import Optional, Callable
 from paperwise.core.types import (
     Message, Role, ToolCall, ToolResult,
     AgentState, AgentConfig, AgentResult, ParsedPaper,
+    TraceEventType,
 )
 from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
 from paperwise.core.agent_loop import AgentLoopMixin
+from paperwise.core.trace_collector import TraceCollector, create_trace_collector
 from paperwise.orchestration import SmartOrchestrator, TaskClassifier
 
 
@@ -143,7 +145,9 @@ class AgentSession(AgentLoopMixin):
 
     def __init__(self, workspace: Path, llm_client, tools, harness,
                  memory=None, knowledge_base=None, skills=None, backend="sqlite",
-                 session_id: Optional[str] = None):
+                 session_id: Optional[str] = None,
+                 trace_collector: Optional[TraceCollector] = None,
+                 trace_store=None):
         self.workspace = Path(workspace)
         self.llm = llm_client
         self.tools = tools
@@ -199,6 +203,12 @@ class AgentSession(AgentLoopMixin):
         self._context_window = settings.context_window
         self._compress_failures = 0
 
+        # Trace 收集
+        self.trace_store = trace_store
+        self.trace_collector = trace_collector or create_trace_collector(
+            trace_store=trace_store, enabled=trace_store is not None
+        )
+
     def on_event(self, cb: Callable):
         self.callbacks.append(cb)
 
@@ -227,8 +237,17 @@ class AgentSession(AgentLoopMixin):
             llm_client=self.llm,
             workspace=self.workspace,
             base_config=None,
+            trace_collector=self.trace_collector,
         )
         result = await orchestrator.run(user_message, paper_dir=paper_dir)
+
+        # 记录 orchestrator 子 trace 引用
+        if result.trace_id and self.trace_collector.is_active():
+            self.trace_collector.add_event(
+                TraceEventType.ROUTER_DECISION,
+                data={"routed_to": "orchestrator", "child_trace_id": result.trace_id, "success": result.success},
+            )
+
         summary = (
             f"<orchestration_result>\n"
             f"Task routed through multi-agent orchestration (success={result.success}).\n"
@@ -236,8 +255,8 @@ class AgentSession(AgentLoopMixin):
             f"</orchestration_result>"
         )
         from paperwise.core.types import Message
-        self.state.messages.append(Message(role="system", content=summary))
-        self._hierarchical_memory.add_turn(Message(role="system", content=summary))
+        self.state.messages.append(Message(role=Role.SYSTEM, content=summary))
+        self._hierarchical_memory.add_turn(Message(role=Role.SYSTEM, content=summary))
         return result.final_output
 
     async def chat(self, user_message: str) -> str:
@@ -247,9 +266,27 @@ class AgentSession(AgentLoopMixin):
         self._step_count = 0
         self._consecutive_text_responses = 0
         self._current_task_description = user_message
+
+        trace = self.trace_collector.start_trace(
+            task=user_message,
+            session_id=self.session_id,
+            metadata={"source": "session", "current_paper": self.state.current_paper},
+        )
+        self.trace_collector.add_event(
+            TraceEventType.CONTEXT_ASSEMBLED,
+            data={"current_paper": self.state.current_paper, "paper_parsed": self.state.paper_parsed},
+        )
+
         # Route complex tasks on loaded papers through the orchestrator
         if self._should_orchestrate(user_message):
-            return await self._run_orchestrated(user_message)
+            self.trace_collector.add_event(
+                TraceEventType.ROUTER_DECISION,
+                data={"routed_to": "orchestrator", "reason": "complex_task"},
+            )
+            response = await self._run_orchestrated(user_message)
+            self.trace_collector.end_trace()
+            return response
+
         # 每轮对话重置工具暴露（避免上一轮 skill 的工具绑定泄漏到本轮）
         if hasattr(self.tools, "activate_all"):
             self.tools.activate_all()
@@ -257,6 +294,10 @@ class AgentSession(AgentLoopMixin):
         # 为当前用户请求生成显式 Plan
         self._plan = Plan.from_task_text(user_message)
         plan_text = self._plan.to_status_text()
+        self.trace_collector.add_event(
+            TraceEventType.PLAN_GENERATED,
+            data={"plan": self._plan.to_dict(), "tasks": [t.to_dict() for t in self._plan.tasks]},
+        )
 
         # 记忆注入：每轮对话时注入用户记忆
         memory_context = ""
@@ -295,6 +336,12 @@ class AgentSession(AgentLoopMixin):
 
                 # 退出条件检查
                 if reason := self._check_exit():
+                    self.trace_collector.add_event(
+                        TraceEventType.EXIT_CONDITION,
+                        data={"reason": reason, "step": self._total_steps},
+                        step=self._total_steps,
+                    )
+                    self.trace_collector.end_trace()
                     return (
                         f"[会话因 {reason} 暂停]\n"
                         "分析过程较长，我已收集了一些信息。\n"
@@ -308,6 +355,11 @@ class AgentSession(AgentLoopMixin):
                 # 调用 LLM
                 self._emit("step", f"{self._total_steps + 1}/{self._hard_cap}")
                 self._emit("thinking", f"思考中... (第{self._total_steps + 1}/{self._hard_cap}步)")
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_START,
+                    data={"max_steps": self._hard_cap},
+                    step=self._total_steps + 1,
+                )
 
                 # 预算感知提示
                 budget_note = self._budget_note()
@@ -319,7 +371,24 @@ class AgentSession(AgentLoopMixin):
                 # 软分层记忆压缩
                 await self._maybe_compress_memory()
 
+                t0 = time.time()
+                self.trace_collector.add_event(
+                    TraceEventType.LLM_START,
+                    data={"step": self._total_steps + 1},
+                    step=self._total_steps + 1,
+                )
                 response = await self._call_llm()
+                llm_latency_ms = (time.time() - t0) * 1000
+                self.trace_collector.add_event(
+                    TraceEventType.LLM_END,
+                    data={
+                        "stop_reason": response.stop_reason,
+                        "content_preview": (response.content or "")[:200],
+                        "tool_calls": [tc.name for tc in response.tool_calls],
+                    },
+                    step=self._total_steps + 1,
+                    latency_ms=llm_latency_ms,
+                )
                 self.harness.post_llm(self._build_agent_state(), response)
 
                 if response.tool_calls:
@@ -333,7 +402,24 @@ class AgentSession(AgentLoopMixin):
                     self.state.messages.append(assistant_msg)
                     self._hierarchical_memory.add_turn(assistant_msg)
                     for tc in response.tool_calls:
+                        t1 = time.time()
+                        self.trace_collector.add_event(
+                            TraceEventType.TOOL_START,
+                            data={"tool_name": tc.name, "args": tc.arguments},
+                            step=self._total_steps + 1,
+                        )
                         result = await self._execute_tool(tc)
+                        tool_latency_ms = (time.time() - t1) * 1000
+                        self.trace_collector.add_event(
+                            TraceEventType.TOOL_END,
+                            data={
+                                "tool_name": tc.name,
+                                "is_error": result.is_error,
+                                "output_preview": (result.output or "")[:200],
+                            },
+                            step=self._total_steps + 1,
+                            latency_ms=tool_latency_ms,
+                        )
                         tool_msg = Message(
                             role=Role.TOOL,
                             content=result.output,
@@ -356,8 +442,15 @@ class AgentSession(AgentLoopMixin):
                     # 对于交付物（报告/PPT），先验证/Judge 再返回
                     if self._looks_complete(response.content):
                         self._emit("verify", "正在检查输出是否完整...")
-                        if await self._verify_completion():
+                        complete = await self._verify_completion()
+                        self.trace_collector.add_event(
+                            TraceEventType.RESULT,
+                            data={"verification_passed": complete},
+                            step=self._total_steps + 1,
+                        )
+                        if complete:
                             self._save()
+                            self.trace_collector.end_trace()
                             return response.content
                         # 未通过：给反馈继续迭代
                         self._consecutive_text_responses = 0
@@ -375,6 +468,7 @@ class AgentSession(AgentLoopMixin):
 
                     # 普通对话回复直接返回
                     self._save()
+                    self.trace_collector.end_trace()
                     return response.content
 
                 else:
@@ -383,12 +477,24 @@ class AgentSession(AgentLoopMixin):
                         content="我似乎没想好如何回应，让我换个思路...",
                     )
                     self.state.messages.append(fallback)
+                    self.trace_collector.end_trace()
                     return "抱歉，我遇到了一些问题。能换一种方式描述你的需求吗？"
 
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_END,
+                    data={"step": self._total_steps + 1},
+                    step=self._total_steps + 1,
+                )
                 self._step_count += 1
                 self._total_steps += 1
 
             # 达到兜底上限
+            self.trace_collector.add_event(
+                TraceEventType.EXIT_CONDITION,
+                data={"reason": "hard_cap", "step": self._total_steps},
+                step=self._total_steps,
+            )
+            self.trace_collector.end_trace()
             return (
                 "分析过程较长，我已经收集了一些信息。\n"
                 "需要我先基于目前的发现生成一个初步回复吗？\n"
@@ -396,6 +502,13 @@ class AgentSession(AgentLoopMixin):
             )
 
         except Exception as e:
+            import traceback
+            self.trace_collector.add_event(
+                TraceEventType.ERROR,
+                data={"exception": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()[-500:]},
+                step=self._total_steps,
+            )
+            self.trace_collector.end_trace()
             return f"抱歉，处理你的请求时遇到了错误：{type(e).__name__}: {e}"
 
     # ══════════ 退出条件 ══════════
@@ -408,6 +521,10 @@ class AgentSession(AgentLoopMixin):
     async def handle_file_upload(self, file_path: Path) -> str:
         """处理用户上传的论文文件。"""
         self._emit("status", f"正在解析：{file_path.name}")
+        self.trace_collector.add_event(
+            TraceEventType.CONTEXT_ASSEMBLED,
+            data={"event": "file_upload", "filename": file_path.name},
+        )
 
         try:
             from paperwise.parsers.pdf_parser import PDFParser
@@ -415,8 +532,24 @@ class AgentSession(AgentLoopMixin):
             # 将上传目录加入读取白名单（允许 Agent 读取原始 PDF）
             self.tools.allow_read_path(file_path.parent)
 
+            self.trace_collector.add_event(
+                TraceEventType.NODE_START,
+                data={"node": "pdf_parser", "phase": "parse"},
+                node_id="pdf_parser",
+            )
             parser = PDFParser()
             parsed = parser.parse(str(file_path))
+            self.trace_collector.add_event(
+                TraceEventType.NODE_END,
+                data={
+                    "node": "pdf_parser",
+                    "paper_id": parsed.paper_id,
+                    "pages": parsed.metadata.get("page_count", 0),
+                    "figures": len(parsed.figures),
+                    "tables": len(parsed.tables),
+                },
+                node_id="pdf_parser",
+            )
 
             # 解析产物目录也加入读取白名单（Agent 需要读 text.md/figures/…）
             self.tools.allow_read_path(parsed.output_dir)
@@ -563,8 +696,12 @@ class AgentSession(AgentLoopMixin):
 
         # 1. LLM 提取记忆
         try:
-            await self.memory.extract_from_conversation(
+            saved = await self.memory.extract_from_conversation(
                 self.llm, user_msg, agent_response)
+            self.trace_collector.add_event(
+                TraceEventType.MEMORY_EXTRACT,
+                data={"cards_created": len(saved)},
+            )
         except Exception as e:
             self._emit("warn", f"记忆提取失败: {type(e).__name__}")
 

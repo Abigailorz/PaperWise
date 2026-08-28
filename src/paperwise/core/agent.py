@@ -10,11 +10,13 @@ from typing import Optional, Callable
 from paperwise.core.types import (
     Message, Role, ToolCall, ToolResult,
     AgentState, AgentConfig, AgentResult,
+    TraceEventType,
 )
 from paperwise.core.llm_client import LLMClient, LLMResponse, StreamEvent
 from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
 from paperwise.core.agent_loop import AgentLoopMixin
+from paperwise.core.trace_collector import TraceCollector, create_trace_collector
 from paperwise.harness.harness import Harness
 from paperwise.harness.constraints import ConstraintViolation
 from paperwise.tools.registry import ToolRegistry
@@ -30,6 +32,7 @@ class Agent(AgentLoopMixin):
         llm_client: LLMClient,
         harness: Harness,
         workspace_dir: Path,
+        trace_collector: Optional[TraceCollector] = None,
     ):
         self.config = config
         self.tools = tools
@@ -65,39 +68,79 @@ class Agent(AgentLoopMixin):
         self._time_budget = settings.time_budget_seconds
         self._start_time = time.time()
 
+        self.trace_collector = trace_collector or create_trace_collector(enabled=False)
+
     def on_event(self, callback: Callable) -> None:
         """Register an event callback for UI updates."""
         self.callbacks.append(callback)
 
     async def run(self, task: str) -> AgentResult:
         """Execute the task, routing through orchestration when enabled."""
-        if not getattr(self.config, "enable_orchestration", True):
-            return await self._legacy_run(task)
-        # Lazy import avoids circular dependency with orchestration.orchestrator
-        from paperwise.orchestration import SmartOrchestrator
-        orchestrator = SmartOrchestrator(
-            llm_client=self.llm,
-            workspace=self.workspace,
-            base_config=self.config,
+        trace = self.trace_collector.start_trace(
+            task=task,
+            metadata={
+                "agent_name": self.config.name,
+                "workspace": str(self.workspace),
+                "enable_orchestration": getattr(self.config, "enable_orchestration", True),
+            },
         )
-        result = await orchestrator.run(task, paper_dir=self.workspace)
-        # Copy sub-agent metrics into the outer agent state so downstream eval code
-        # can read from agent.state as before.
-        self.state.messages = result.messages or self.state.messages
-        self.state.current_step = result.steps
-        self.state.tool_call_count = result.tool_stats or self.state.tool_call_count
-        self.state.tokens_used = result.tokens_used
-        return result
+        try:
+            if not getattr(self.config, "enable_orchestration", True):
+                result = await self._legacy_run(task)
+            else:
+                # Lazy import avoids circular dependency with orchestration.orchestrator
+                from paperwise.orchestration import SmartOrchestrator
+                orchestrator = SmartOrchestrator(
+                    llm_client=self.llm,
+                    workspace=self.workspace,
+                    base_config=self.config,
+                    trace_collector=self.trace_collector,
+                )
+                result = await orchestrator.run(task, paper_dir=self.workspace)
+                # Copy sub-agent metrics into the outer agent state so downstream eval code
+                # can read from agent.state as before.
+                self.state.messages = result.messages or self.state.messages
+                self.state.current_step = result.steps
+                self.state.tool_call_count = result.tool_stats or self.state.tool_call_count
+                self.state.tokens_used = result.tokens_used
+
+            result.trace_id = trace.trace_id
+            self.trace_collector.end_trace(result)
+            return result
+        except Exception as e:
+            self.trace_collector.add_event(
+                TraceEventType.ERROR,
+                data={"exception": type(e).__name__, "message": str(e)},
+            )
+            result = self._make_result(
+                f"[Agent error: {e}]", success=False, error=str(e)
+            )
+            result.trace_id = trace.trace_id
+            self.trace_collector.end_trace(result)
+            return result
 
     async def _legacy_run(self, task: str) -> AgentResult:
         """Execute the ReAct loop until the task is completed or a limit is hit."""
         self.state.task_description = task
         self._init_messages(task)
 
+        self.trace_collector.add_event(
+            TraceEventType.PLAN_GENERATED,
+            data={
+                "plan": self._plan.to_dict() if self._plan else {},
+                "tasks": [t.to_dict() for t in (self._plan.tasks if self._plan else [])],
+            },
+        )
+
         try:
             while self.state.current_step < self.config.max_steps:
                 # === Exit condition checks ===
                 if reason := self._check_exit():
+                    self.trace_collector.add_event(
+                        TraceEventType.EXIT_CONDITION,
+                        data={"reason": reason, "step": self.state.current_step},
+                        step=self.state.current_step,
+                    )
                     return self._make_result(
                         f"[Agent stopped: {reason}]", success=False,
                         error=reason
@@ -106,6 +149,11 @@ class Agent(AgentLoopMixin):
                 # === Pre-LLM: context shaping + status bar ===
                 self.harness.pre_llm(self.state)
                 self._emit("step", f"Step {self.state.current_step + 1}/{self.config.max_steps}")
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_START,
+                    data={"max_steps": self.config.max_steps},
+                    step=self.state.current_step + 1,
+                )
 
                 # === Budget-Aware guidance ===
                 budget_note = self._budget_note()
@@ -121,7 +169,25 @@ class Agent(AgentLoopMixin):
                     await self._maybe_compress_memory()
 
                 # === Call LLM (streaming) ===
+                t0 = time.time()
+                self.trace_collector.add_event(
+                    TraceEventType.LLM_START,
+                    data={"model": self.config.model, "step": self.state.current_step + 1},
+                    step=self.state.current_step + 1,
+                )
                 response = await self._call_llm_with_retry()
+                llm_latency_ms = (time.time() - t0) * 1000
+                self.trace_collector.add_event(
+                    TraceEventType.LLM_END,
+                    data={
+                        "stop_reason": response.stop_reason,
+                        "usage": response.usage,
+                        "content_preview": (response.content or "")[:200],
+                        "tool_calls": [tc.name for tc in response.tool_calls],
+                    },
+                    step=self.state.current_step + 1,
+                    latency_ms=llm_latency_ms,
+                )
 
                 # === Post-LLM: update state ===
                 self.harness.post_llm(self.state, response)
@@ -144,7 +210,25 @@ class Agent(AgentLoopMixin):
                     self._memory.add_turn(assistant_msg)
 
                     for tc in response.tool_calls:
+                        t1 = time.time()
+                        self.trace_collector.add_event(
+                            TraceEventType.TOOL_START,
+                            data={"tool_name": tc.name, "args": tc.arguments},
+                            step=self.state.current_step + 1,
+                        )
                         result = await self._execute_tool(tc)
+                        tool_latency_ms = (time.time() - t1) * 1000
+                        self.trace_collector.add_event(
+                            TraceEventType.TOOL_END,
+                            data={
+                                "tool_name": tc.name,
+                                "is_error": result.is_error,
+                                "truncated": result.truncated,
+                                "output_preview": (result.output or "")[:200],
+                            },
+                            step=self.state.current_step + 1,
+                            latency_ms=tool_latency_ms,
+                        )
                         tool_msg = Message(
                             role=Role.TOOL, content=result.output,
                             tool_call_id=tc.id,
@@ -165,7 +249,16 @@ class Agent(AgentLoopMixin):
                     # Early termination check
                     if self._consecutive_text_responses >= self._early_term_threshold:
                         self._emit("verify", "Checking if task is truly complete...")
-                        if not await self._verify_completion():
+                        complete = await self._verify_completion()
+                        self.trace_collector.add_event(
+                            TraceEventType.RESULT,
+                            data={
+                                "verification_passed": complete,
+                                "consecutive_texts": self._consecutive_text_responses,
+                            },
+                            step=self.state.current_step + 1,
+                        )
+                        if not complete:
                             self._consecutive_text_responses = 0
                             retry_msg = Message(
                                 role=Role.USER,
@@ -180,6 +273,11 @@ class Agent(AgentLoopMixin):
                             )
                             self.state.messages.append(retry_msg)
                             self._memory.add_turn(retry_msg)
+                            self.trace_collector.add_event(
+                                TraceEventType.STEP_END,
+                                data={"status": "verification_failed"},
+                                step=self.state.current_step + 1,
+                            )
                             continue
                         return self._make_result(response.content, success=True)
 
@@ -190,9 +288,19 @@ class Agent(AgentLoopMixin):
                 else:
                     self._emit("warn", "Empty response from LLM")
 
+                self.trace_collector.add_event(
+                    TraceEventType.STEP_END,
+                    data={"step": self.state.current_step + 1},
+                    step=self.state.current_step + 1,
+                )
                 self.state.current_step += 1
 
             # Max steps reached
+            self.trace_collector.add_event(
+                TraceEventType.EXIT_CONDITION,
+                data={"reason": "max_steps", "step": self.state.current_step},
+                step=self.state.current_step,
+            )
             return self._make_result(
                 f"[Max steps ({self.config.max_steps}) reached. "
                 f"Tools: {dict(self.state.tool_call_count)}]",
@@ -202,6 +310,15 @@ class Agent(AgentLoopMixin):
         except Exception as e:
             import traceback
             self._emit("error", f"{type(e).__name__}: {e}")
+            self.trace_collector.add_event(
+                TraceEventType.ERROR,
+                data={
+                    "exception": type(e).__name__,
+                    "message": str(e),
+                    "traceback": traceback.format_exc()[-500:],
+                },
+                step=self.state.current_step,
+            )
             return self._make_result(
                 f"[Agent error: {e}]", success=False, error=str(e)
             )
@@ -291,6 +408,11 @@ class Agent(AgentLoopMixin):
             if self.harness.should_retry(e, attempt):
                 delay = min(2 ** attempt, 30)
                 self._emit("retry", f"API error, retrying in {delay}s (attempt {attempt})...")
+                self.trace_collector.add_event(
+                    TraceEventType.RETRY,
+                    data={"attempt": attempt, "delay": delay, "error": str(e)},
+                    step=self.state.current_step + 1,
+                )
                 await asyncio.sleep(delay)
                 return await self._call_llm_with_retry(attempt + 1)
             raise
@@ -439,6 +561,10 @@ class Agent(AgentLoopMixin):
             success=success, error_message=error,
             tokens_used=self.state.tokens_used,
         )
+        if self.trace_collector.is_active():
+            current_trace = self.trace_collector.current_trace()
+            if current_trace:
+                result.trace_id = current_trace.trace_id
         self._save_trajectory()
         return result
 
