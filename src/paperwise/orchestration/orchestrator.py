@@ -19,10 +19,11 @@ from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
 from paperwise.orchestration.types import GraphState, NodeSpec
 from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow, ExecutionConfig, DAGExecutorError
+from paperwise.orchestration.dynamic_planner import DynamicDAGPlanner, PlanCompositionPolicy
+from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.orchestration.artifact_manager import ArtifactManager
-from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
 from paperwise.harness.harness import Harness
@@ -43,6 +44,7 @@ class SmartOrchestrator:
       classifier: Optional[TaskClassifier] = None,
       max_review_rounds: int = 3,
       trace_collector: Optional[TraceCollector] = None,
+      use_dynamic_plan: bool = False,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -56,6 +58,8 @@ class SmartOrchestrator:
           user_id="default",
           research_state_manager=self.research_state_manager,
       )
+      self.dynamic_planner = DynamicDAGPlanner()
+      self.plan_policy = PlanCompositionPolicy(use_dynamic_plan=use_dynamic_plan)
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
@@ -188,11 +192,12 @@ class SmartOrchestrator:
           data={"context_size": context_package.size()},
       )
 
-      plan = self._build_complex_plan(task)
+      route = await self.classifier.classify(task)
+      plan = self._select_plan(task, route, research_state)
       plan = self.memory_adapter.apply_gaps_to_plan(plan, research_state)
       self.trace_collector.add_event(
           TraceEventType.PLAN_GENERATED,
-          data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks]},
+          data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks], "dynamic": self.plan_policy.use_dynamic_plan},
       )
       state = GraphState(
           task=task,
@@ -354,6 +359,15 @@ class SmartOrchestrator:
           depends_on=["generate_report", "generate_pptx"],
       )
       return plan
+
+  def _select_plan(self, task: str, route, research_state: ResearchState) -> Plan:
+      """根据配置选择静态 Plan 或动态 Plan。"""
+      if self.plan_policy.use_dynamic_plan:
+          plan = self.dynamic_planner.build_plan(task, route, research_state, self.plan_policy)
+          if DynamicDAGPlanner.is_topologically_valid(plan) and plan.tasks:
+              return plan
+          # 动态规划失败时回退到静态 Plan
+      return self._build_complex_plan(task)
 
   def _condition_requires_pptx(self, state: GraphState, _task) -> bool:
       task = state.get_artifact("task_text") or ""

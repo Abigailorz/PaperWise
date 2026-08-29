@@ -6,7 +6,10 @@ ReplanAgent inserts new nodes into the Plan while preserving completed work.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from paperwise.core.plan import Plan, Task
+from paperwise.memory.research_state import ResearchState, KnowledgeGap
 from paperwise.orchestration.types import GraphState
 
 
@@ -98,3 +101,95 @@ class ReplanAgent:
             return done_deps
         done_tasks = [t.id for t in plan.tasks if t.status.value == "done"]
         return done_tasks[-1:] if done_tasks else []
+
+    def replan_from_gaps(
+        self,
+        plan: Plan,
+        research_state: ResearchState,
+        state: Optional[GraphState] = None,
+    ) -> Plan:
+        """根据 ResearchState 中的 unresolved gaps 插入恢复节点。
+
+        保持已完成任务不变，为每个 high priority gap 添加一个恢复节点。
+        """
+        new_plan = Plan()
+        # 复制已完成任务
+        for t in plan.tasks:
+            if t.status.value == "done":
+                new_plan.add(
+                    description=t.description,
+                    task_id=t.id,
+                    depends_on=list(t.depends_on),
+                    parallel_group=t.parallel_group,
+                    condition=t.condition,
+                    max_retries=t.max_retries,
+                    output_artifact=t.output_artifact,
+                    confidence_threshold=t.confidence_threshold,
+                )
+                new_plan.mark_done(t.id, evidence=t.evidence)
+
+        done_task_ids = {t.id for t in new_plan.tasks}
+        last_done = [t.id for t in new_plan.tasks][-1:] if new_plan.tasks else []
+
+        gaps = research_state.get_high_priority_gaps(limit=3)
+        added_ids: set[str] = set()
+        for gap in gaps:
+            corrective_id = self._gap_to_corrective_node(gap)
+            if corrective_id in added_ids:
+                continue
+            deps = last_done.copy()
+            if gap.node_id and gap.node_id in done_task_ids:
+                deps = [gap.node_id]
+            new_plan.add(
+                description=f"Address gap: {gap.description}",
+                task_id=corrective_id,
+                depends_on=deps,
+                max_retries=1,
+            )
+            added_ids.add(corrective_id)
+            last_done = [corrective_id]
+
+        # 重新添加未运行任务，使其依赖最后一个恢复节点
+        for t in plan.tasks:
+            if t.status.value != "done":
+                depends_on = list(t.depends_on)
+                if last_done and depends_on and any(dep in done_task_ids for dep in depends_on):
+                    depends_on = [last_done[0] if dep in done_task_ids else dep for dep in depends_on]
+                new_plan.add(
+                    description=t.description,
+                    task_id=t.id,
+                    depends_on=depends_on,
+                    parallel_group=t.parallel_group,
+                    condition=t.condition,
+                    max_retries=t.max_retries,
+                    output_artifact=t.output_artifact,
+                    confidence_threshold=t.confidence_threshold,
+                )
+
+        return new_plan
+
+    def _gap_to_corrective_node(self, gap: KnowledgeGap) -> str:
+        """将 gap 描述映射到恢复节点 id。"""
+        desc = gap.description.lower()
+        if any(k in desc for k in ("numerical", "number", "digit", "value", "metric")):
+            return "re_verify_with_code"
+        if any(k in desc for k in ("evidence", "citation", "source")):
+            return "expand_evidence"
+        if any(k in desc for k in ("read", "section", "text")):
+            return "re_read_section"
+        return "dynamic_research"
+
+    def replan_from_capability_failure(
+        self,
+        plan: Plan,
+        failed_task: Task,
+        state: GraphState,
+        node_registry: Optional[Any] = None,
+    ) -> Plan:
+        """当某个节点因能力不匹配失败时，尝试用 registry 中的替代节点替换。"""
+        # 默认实现：退回到标准 replan
+        return self.replan(plan, failed_task, "capability_failure", state)
+
+
+# Forward reference type hint cleanup
+from paperwise.orchestration.registries import NodeRegistry  # noqa: E402

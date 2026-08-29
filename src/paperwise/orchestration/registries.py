@@ -103,6 +103,65 @@ class CapabilityRegistry:
     def list(self) -> list[str]:
         return list(self._capabilities.keys())
 
+    def find_for_task(
+        self,
+        task: str,
+        required_output_artifacts: Optional[list[str]] = None,
+    ) -> list[Capability]:
+        """根据 task 文本和期望输出 artifacts 选择匹配的 capability。
+
+        匹配逻辑（按优先级）：
+        1. 若 required_output_artifacts 包含 SlideArtifact，优先返回 paper_to_ppt
+        2. 若包含 ReportArtifact，优先返回 paper_to_report
+        3. 若 task 含 summary / overview，返回 paper_summarize
+        4. 否则返回 paper_deep_analysis
+        """
+        task_lower = task.lower()
+        results: list[Capability] = []
+
+        if required_output_artifacts:
+            if any("SlideArtifact" in a for a in required_output_artifacts):
+                cap = self.get("paper_to_ppt")
+                if cap:
+                    results.append(cap)
+            if any("ReportArtifact" in a for a in required_output_artifacts):
+                cap = self.get("paper_to_report")
+                if cap and cap not in results:
+                    results.append(cap)
+
+        if any(k in task_lower for k in ("summarize", "summary", "overview", "brief")):
+            cap = self.get("paper_summarize")
+            if cap and cap not in results:
+                results.append(cap)
+
+        if not results:
+            cap = self.get("paper_deep_analysis")
+            if cap:
+                results.append(cap)
+
+        return results
+
+    def resolve_nodes(self, capability: Capability, node_registry: Optional["NodeRegistry"] = None) -> list[str]:
+        """将 capability 的 required_nodes 展开为节点 id 列表。
+
+        如果 required_nodes 中包含 capability id（如 paper_deep_analysis），
+        则递归解析其对应 capability 的节点。
+        """
+        from paperwise.orchestration.registries import NODE_REGISTRY
+        nodes: list[str] = []
+        registry = node_registry or NODE_REGISTRY
+        for node_ref in capability.required_nodes:
+            if self.get(node_ref):
+                # node_ref 是子 capability
+                sub_cap = self.get(node_ref)
+                nodes.extend(self.resolve_nodes(sub_cap, registry))
+            elif registry.get(node_ref):
+                nodes.append(node_ref)
+            else:
+                # 未知节点，保留但不做处理
+                nodes.append(node_ref)
+        return nodes
+
 
 class NodeRegistry:
     """Registry of all executable nodes in the system."""
@@ -323,6 +382,25 @@ class NodeRegistry:
     def by_category(self, category: str) -> list[NodeSpec]:
         return [n for n in self._nodes.values() if n.category == category]
 
+    def select_by_category(self, category: str) -> list[NodeSpec]:
+        """Alias for by_category with clearer intent."""
+        return self.by_category(category)
+
+    def filter_by_capabilities(self, capability_ids: list[str]) -> list[NodeSpec]:
+        """返回 required_capabilities 与给定 capability ids 有交集的节点。"""
+        cap_set = set(capability_ids)
+        return [
+            n for n in self._nodes.values()
+            if cap_set.intersection(n.required_capabilities or [])
+        ]
+
+    def filter_by_output_artifact(self, artifact_type: str) -> list[NodeSpec]:
+        """返回 output_schema 值包含指定 artifact 类型的节点（简单字符串匹配）。"""
+        return [
+            n for n in self._nodes.values()
+            if artifact_type in str(n.output_schema)
+        ]
+
 
 class WorkflowRegistry:
     """Registry of pre-defined workflow templates."""
@@ -398,8 +476,31 @@ class WorkflowRegistry:
         return list(self._workflows.keys())
 
     def select(self, task_route: Any) -> Optional[WorkflowTemplate]:
-        """Pick a workflow template for a given task route."""
-        return self.get(task_route.workflow)
+        """Pick a workflow template for a given task route.
+
+        优先使用 task_route.workflow；若未匹配，则根据 task 文本和意图打分。
+        """
+        if task_route and getattr(task_route, "workflow", None):
+            wf = self.get(task_route.workflow)
+            if wf:
+                return wf
+
+        task_text = ""
+        if task_route:
+            task_text = getattr(task_route, "task_text", "") or ""
+        task_lower = task_text.lower()
+
+        best: Optional[WorkflowTemplate] = None
+        best_score = -1
+        for wf in self._workflows.values():
+            score = 0
+            for intent in wf.trigger_intents:
+                if intent in task_lower:
+                    score += 1
+            if score > best_score:
+                best_score = score
+                best = wf
+        return best if best_score > 0 else None
 
 
 class ArtifactRegistry:

@@ -170,6 +170,22 @@ class Plan:
             "progress": self.progress,
         }
 
+    def merge(self, other: "Plan") -> "Plan":
+        """合并另一个 Plan 的任务到当前 Plan，跳过已存在的 task_id。
+
+        用于 replan 时把恢复节点插入现有 Plan。
+        """
+        existing_ids = {t.id for t in self.tasks}
+        for task in other.tasks:
+            if task.id not in existing_ids:
+                self.tasks.append(task)
+                existing_ids.add(task.id)
+        return self
+
+    def to_dependency_graph(self) -> dict[str, list[str]]:
+        """返回 task_id -> list[dependency_id] 的依赖图。"""
+        return {t.id: list(t.depends_on) for t in self.tasks}
+
     def to_todo_items(self) -> list[dict]:
         return [
             {"text": t.description, "status": t.status.value, "id": t.id}

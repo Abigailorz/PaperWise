@@ -165,13 +165,10 @@ class OrchestratorMemoryAdapter:
 
 ---
 
-## 4. 下一阶段（Iteration 3: P2）
+## 4. 当前已完成（Iteration 3: P2）
 
 ### 4.1 目标
 建立真正的 Dynamic DAG Planner，基于 Capability Registry 动态组合节点。
-- `get_high_priority_gaps(limit=3) -> list[KnowledgeGap]`
-- `has_unresolved_gaps() -> bool`
-- `add_finding_from_node(node_id, artifact_path, summary)`
 
 ### 4.2 关键新增模块
 
@@ -180,7 +177,10 @@ class OrchestratorMemoryAdapter:
 class DynamicDAGPlanner:
     def build_plan(self, task: str, task_route: TaskRoute,
                    research_state: ResearchState,
-                   registry: CapabilityRegistry | NodeRegistry) -> Plan: ...
+                   policy: PlanCompositionPolicy) -> Plan: ...
+
+    @staticmethod
+    def is_topologically_valid(plan: Plan) -> bool: ...
 
 class PlanCompositionPolicy:
     use_dynamic_plan: bool = False  # 默认关闭，保留静态 fallback
@@ -188,9 +188,9 @@ class PlanCompositionPolicy:
 
 #### `registries.py` 扩展
 - `CapabilityRegistry.find_for_task(task, required_output_artifacts) -> list[Capability]`
-- `CapabilityRegistry.resolve_nodes(capability) -> list[str]`
-- `NodeRegistry.select_by_category(category)` / `filter_by_capabilities(...)`
-- `WorkflowRegistry.select(task_route) -> WorkflowTemplate`
+- `CapabilityRegistry.resolve_nodes(capability, node_registry) -> list[str]`
+- `NodeRegistry.select_by_category(category)` / `filter_by_capabilities(...)` / `filter_by_output_artifact(...)`
+- `WorkflowRegistry.select(task_route) -> WorkflowTemplate`（支持 task 文本打分 fallback）
 
 #### `replanner.py` 扩展
 - `ReplanAgent.replan_from_gaps(plan, research_state, state) -> Plan`
@@ -200,26 +200,59 @@ class PlanCompositionPolicy:
 - `Plan.merge(new_plan) -> Plan`
 - `Plan.to_dependency_graph() -> dict`
 
+### 4.3 集成点
+
+- `SmartOrchestrator.__init__` 增加 `use_dynamic_plan: bool = False`
+- `SmartOrchestrator._select_plan()` 在启用时调用 `DynamicDAGPlanner.build_plan`
+- 动态 Plan 生成失败自动回退到静态 `_build_complex_plan`
+
+### 4.4 测试
+
+新增：
+- `tests/test_orchestration/test_capability_registry.py`：8 个测试
+- `tests/test_orchestration/test_dynamic_planner.py`：7 个测试
+
+全部 15 个测试通过。
+
 ---
 
-## 5. 验收标准
+## 5. 后续方向（P3 及以后）
+
+### P3：Experience / Strategy Learning
+- 从 Agent Trace 中提取失败模式
+- Reviewer 升级为 Learning Signal Generator
+- Procedural Memory 驱动 Strategy Selection
+- 建立 Strategy Library
+
+### P4：Proactive Research Intelligence
+- `ProactiveEngine` 从 Paper Recommender 升级为 Research Opportunity Detector
+- 支持 Knowledge Gap、Contradiction、Missing Evidence、New Method 等 Opportunity 类型
+- 论文推荐只是 Action 之一
+
+### P5：Research-native Intelligence
+- 构建 Research Graph（User - Project - Question - Paper - Method - Evidence - Experiment - Hypothesis）
+- Agent 参与研究本身，而非仅执行指定任务
+
+---
+
+## 6. 验收标准
 
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
 | P0 | `pytest tests/test_evaluation/ -v` | 31/31 通过；`TraceStore.get_metrics` 指标正确；simple path trace 包含子 Agent 事件 |
 | P1 | `pytest tests/test_orchestration/test_memory_driven.py tests/test_memory/test_context_engine_orchestrator.py -v` | 11/11 通过；ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
-| P2 | `pytest tests/test_orchestration/test_dynamic_planner.py -v` | DynamicDAGPlanner 生成拓扑合法 Plan |
+| P2 | `pytest tests/test_orchestration/test_capability_registry.py tests/test_orchestration/test_dynamic_planner.py -v` | 15/15 通过；DynamicDAGPlanner 生成拓扑合法 Plan |
 
 ---
 
-## 6. 已知问题
+## 7. 已知问题
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
 
 ---
 
-## 7. Git 工作流
+## 8. Git 工作流
 
 每个迭代：
 1. 代码改动 + 测试
