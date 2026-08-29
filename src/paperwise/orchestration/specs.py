@@ -30,6 +30,7 @@ class SubAgentSpec:
     output_path: str = ""
     max_steps: int = 0
     enable_plan: bool = False
+    context_xml: str = ""
 
     def to_node_spec(self, node_id: str = "", category: str = "") -> NodeSpec:
         """Convert this sub-agent spec into a standardized NodeSpec."""
@@ -44,6 +45,7 @@ class SubAgentSpec:
             output_path=self.output_path,
             max_steps=self.max_steps,
             enable_plan=self.enable_plan,
+            context_xml=self.context_xml,
         )
 
 

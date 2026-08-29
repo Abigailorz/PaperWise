@@ -22,6 +22,7 @@ from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_wo
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.orchestration.artifact_manager import ArtifactManager
+from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
 from paperwise.harness.harness import Harness
@@ -50,9 +51,15 @@ class SmartOrchestrator:
       self.classifier = classifier or TaskClassifier(llm_client, workspace)
       self.replanner = ReplanAgent()
       self.research_state_manager = ResearchStateManager(self.workspace, user_id="default")
+      self.memory_adapter = OrchestratorMemoryAdapter(
+          workspace=self.workspace,
+          user_id="default",
+          research_state_manager=self.research_state_manager,
+      )
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
+      self._current_context_xml: str = ""
 
   async def run(self, task: str, paper_dir: Optional[Path] = None) -> AgentResult:
       """Run a task through the appropriate execution path.
@@ -174,7 +181,15 @@ class SmartOrchestrator:
       research_state.dag_status = "running"
       self.research_state_manager.save(research_state)
 
+      context_package = self.memory_adapter.assemble_context(research_state)
+      self._current_context_xml = context_package.to_xml()
+      self.trace_collector.add_event(
+          TraceEventType.CONTEXT_ASSEMBLED,
+          data={"context_size": context_package.size()},
+      )
+
       plan = self._build_complex_plan(task)
+      plan = self.memory_adapter.apply_gaps_to_plan(plan, research_state)
       self.trace_collector.add_event(
           TraceEventType.PLAN_GENERATED,
           data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks]},
@@ -188,6 +203,8 @@ class SmartOrchestrator:
       )
       state.set_artifact("paper_dir", paper_dir)
       state.set_artifact("task_text", task)
+      state.set_artifact("context_xml", context_package.to_xml())
+      state.set_artifact("research_state_id", research_state.state_id)
 
       executor = DAGExecutor(
           config=ExecutionConfig(
@@ -217,13 +234,15 @@ class SmartOrchestrator:
 
       try:
           exec_result = await executor.run(plan, state, self._emit_progress)
-          research_state.completed_nodes = list(exec_result.get("completed_nodes", []))
-          research_state.failed_nodes = list(exec_result.get("failed_nodes", []))
-          research_state.gaps = [
-              KnowledgeGap(node_id=n, description=f"Node {n} failed or was replanned")
-              for n in research_state.failed_nodes
-          ]
-          self.research_state_manager.save(research_state)
+          research_state = self.memory_adapter.update_state_from_execution(
+              research_state,
+              completed_nodes=list(exec_result.get("completed_nodes", [])),
+              failed_nodes=list(exec_result.get("failed_nodes", [])),
+              gaps=[
+                  KnowledgeGap(node_id=n, description=f"Node {n} failed or was replanned")
+                  for n in exec_result.get("failed_nodes", [])
+              ],
+          )
       except DAGExecutorError as budget_err:
           # Graceful degradation: return whatever artifacts were produced so far.
           return AgentResult(
@@ -283,12 +302,23 @@ class SmartOrchestrator:
       self.research_state_manager.save(research_state)
       self._write_status(paper_dir, "recommendations", [r.to_dict() for r in recommendations])
 
-      return AgentResult(
+      result = AgentResult(
           final_output=final_text,
           success=success,
           steps=total_steps,
           tool_stats={},
       )
+
+      # Memory learning: record episode and procedure
+      current_trace = self.trace_collector.current_trace()
+      self.memory_adapter.record_episode(research_state, current_trace, result)
+      self.memory_adapter.learn_procedure(
+          task_type=research_state.intent or "analysis",
+          plan=plan,
+          success=success,
+      )
+
+      return result
 
   def _build_complex_plan(self, task: str) -> Plan:
       """Build the dynamic DAG for a complex paper-analysis task."""
@@ -573,7 +603,7 @@ class SmartOrchestrator:
       spec.name = "revision_writer"
       return await self._run_sub_agent(spec, paper_dir)
 
-  async def _run_sub_agent(self, spec: SubAgentSpec, paper_dir: Path) -> AgentResult:
+  async def _run_sub_agent(self, spec: SubAgentSpec, paper_dir: Path, context_xml: str = "") -> AgentResult:
       """Run a single SubAgentSpec directly as an Agent in the shared workspace.
 
       The Agent runs with ``enable_orchestration=False`` so it does not recurse
@@ -589,9 +619,14 @@ class SmartOrchestrator:
       max_steps = spec.max_steps or 25
       harness = Harness(paper_dir, max_steps=max_steps)
 
+      system_prompt = spec.system_prompt or "You are a rigorous academic-paper analysis agent."
+      context_xml = context_xml or spec.context_xml or self._current_context_xml
+      if context_xml:
+          system_prompt += f"\n\n<context_for_this_node>\n{context_xml}\n</context_for_this_node>"
+
       config = AgentConfig(
           name=spec.name,
-          system_prompt=spec.system_prompt,
+          system_prompt=system_prompt,
           model=self.base_config.model,
           max_steps=max_steps,
             enable_plan=spec.enable_plan,

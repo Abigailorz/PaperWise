@@ -174,6 +174,7 @@ class NodeSpec:
     output_path: str = ""
     max_steps: int = 25
     enable_plan: bool = False
+    context_xml: str = ""
     verification_policy: VerificationPolicy = field(default_factory=VerificationPolicy)
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     # Runtime binding (optional): if this node maps to a tool rather than an agent.

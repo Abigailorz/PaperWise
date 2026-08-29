@@ -67,6 +67,34 @@ class ResearchState:
     def mark_updated(self) -> None:
         self.updated_at = datetime.now().isoformat()
 
+    def get_high_priority_gaps(self, limit: int = 3) -> list[KnowledgeGap]:
+        """按 urgency 排序返回优先级最高的 gaps。"""
+        priority = {"high": 0, "medium": 1, "low": 2}
+        sorted_gaps = sorted(self.gaps, key=lambda g: priority.get(g.urgency, 99))
+        return sorted_gaps[:limit]
+
+    def has_unresolved_gaps(self) -> bool:
+        return bool(self.gaps)
+
+    def add_finding_from_node(self, node_id: str, claim: str, evidence: str = "", confidence: float = 0.8) -> None:
+        self.findings.append(Finding(node_id=node_id, claim=claim, evidence=evidence, confidence=confidence))
+        self.mark_updated()
+
+    def add_gap(self, description: str, node_id: str = "", urgency: str = "medium", suggested_action: str = "") -> KnowledgeGap:
+        gid = f"gap_{uuid.uuid4().hex[:6]}"
+        gap = KnowledgeGap(gap_id=gid, description=description, node_id=node_id, urgency=urgency, suggested_action=suggested_action)
+        self.gaps.append(gap)
+        self.mark_updated()
+        return gap
+
+    def close_gap(self, gap_id: str) -> bool:
+        before = len(self.gaps)
+        self.gaps = [g for g in self.gaps if g.gap_id != gap_id]
+        if len(self.gaps) < before:
+            self.mark_updated()
+            return True
+        return False
+
 
 class ResearchStateManager:
     """Persist and load ResearchState for a session/user."""

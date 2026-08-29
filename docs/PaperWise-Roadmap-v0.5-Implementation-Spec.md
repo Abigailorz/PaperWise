@@ -115,7 +115,7 @@ class TraceCollector(ABC):
 
 ---
 
-## 3. 下一阶段（Iteration 2: P1）
+## 3. 当前已完成（Iteration 2: P1）
 
 ### 3.1 目标
 让 `ContextEngine` 进入 Orchestrator 决策路径，建立 **Memory → Decision** 闭环。
@@ -127,19 +127,23 @@ class TraceCollector(ABC):
 class OrchestratorMemoryAdapter:
     def __init__(self, workspace, user_id="default"): ...
     def assemble_context(self, research_state: ResearchState) -> ContextPackage: ...
+    def assemble_context_for_subagent(self, node_id, research_state, max_chars=4000) -> ContextPackage: ...
     def record_episode(self, research_state, trace, result) -> None: ...
     def learn_procedure(self, task_type, plan, success) -> None: ...
     def apply_gaps_to_plan(self, plan, research_state) -> Plan: ...
+    def update_state_from_execution(self, research_state, completed_nodes, failed_nodes, gaps) -> ResearchState: ...
 ```
 
 #### `ContextEngine` 扩展
 - `ContextPackage.size()` / `ContextPackage.truncate(max_chars)`
+- `ContextPackage.for_node(node_id)` — 按节点类型过滤上下文段
 - `ContextEngine.assemble_for_subagent(node_id, research_state) -> ContextPackage`
 
 #### `ResearchState` 扩展
-- `get_high_priority_gaps(limit=3) -> list[KnowledgeGap]`
-- `has_unresolved_gaps() -> bool`
-- `add_finding_from_node(node_id, artifact_path, summary)`
+- `get_high_priority_gaps(limit=3)`
+- `has_unresolved_gaps()`
+- `add_finding_from_node(...)`
+- `add_gap(...)` / `close_gap(...)`
 
 ### 3.3 集成点
 
@@ -149,14 +153,25 @@ class OrchestratorMemoryAdapter:
 - `_run_complex()` 执行后更新 `findings` / `gaps`
 - `_run_complex()` 返回前调用 `record_episode` / `learn_procedure`
 - `_run_sub_agent()` 将 `context_xml` 注入子 Agent system prompt
-- `Agent` system prompt 支持 `<orchestrator_context>` 块
+- `SubAgentSpec` / `NodeSpec` 新增 `context_xml` 字段
+
+### 3.4 测试
+
+新增：
+- `tests/test_orchestration/test_memory_driven.py`：7 个测试
+- `tests/test_memory/test_context_engine_orchestrator.py`：4 个测试
+
+全部 11 个测试通过。
 
 ---
 
-## 4. 再下一阶段（Iteration 3: P2）
+## 4. 下一阶段（Iteration 3: P2）
 
 ### 4.1 目标
 建立真正的 Dynamic DAG Planner，基于 Capability Registry 动态组合节点。
+- `get_high_priority_gaps(limit=3) -> list[KnowledgeGap]`
+- `has_unresolved_gaps() -> bool`
+- `add_finding_from_node(node_id, artifact_path, summary)`
 
 ### 4.2 关键新增模块
 
@@ -192,7 +207,7 @@ class PlanCompositionPolicy:
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
 | P0 | `pytest tests/test_evaluation/ -v` | 31/31 通过；`TraceStore.get_metrics` 指标正确；simple path trace 包含子 Agent 事件 |
-| P1 | `pytest tests/test_orchestration/test_memory_driven.py -v` | ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
+| P1 | `pytest tests/test_orchestration/test_memory_driven.py tests/test_memory/test_context_engine_orchestrator.py -v` | 11/11 通过；ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
 | P2 | `pytest tests/test_orchestration/test_dynamic_planner.py -v` | DynamicDAGPlanner 生成拓扑合法 Plan |
 
 ---

@@ -50,6 +50,50 @@ class ContextPackage:
         lines.append("</context>")
         return "\n".join(lines)
 
+    def size(self) -> int:
+        """返回 XML 字符串的字符数，用于控制 prompt 长度。"""
+        return len(self.to_xml())
+
+    def truncate(self, max_chars: int) -> "ContextPackage":
+        """按优先级截断上下文包：先 paper_context，再 episodes，再 procedures，最后 profile。"""
+        if self.size() <= max_chars:
+            return self
+        # 创建一个可变的副本
+        import copy
+        pkg = copy.deepcopy(self)
+        # 优先截断 paper_context（通常最长且最可替换）
+        while pkg.paper_context and pkg.size() > max_chars:
+            pkg.paper_context.pop()
+        # 然后截断 episodes
+        while pkg.episodes and pkg.size() > max_chars:
+            pkg.episodes.pop()
+        # 然后截断 procedures
+        while pkg.procedures and pkg.size() > max_chars:
+            pkg.procedures.pop()
+        # 最后截断 profile
+        while pkg.profile and pkg.size() > max_chars:
+            pkg.profile.pop()
+        return pkg
+
+    def for_node(self, node_id: str) -> "ContextPackage":
+        """返回针对特定节点的过滤版本。
+
+        规则：
+        - 所有节点都保留 profile 和 working_memory
+        - method / experiment / verify 节点保留 procedures 和 paper_context
+        - report / pptx 生成节点保留 episodes（历史偏好）
+        """
+        import copy
+        pkg = copy.deepcopy(self)
+        if node_id in ("analyze_method", "verify_data", "re_verify_with_code", "experiment_analysis"):
+            pkg.episodes = []
+        elif node_id in ("generate_report", "generate_pptx", "revision", "report_assemble", "ppt_assemble"):
+            pkg.paper_context = []
+        else:
+            # 通用节点：保留全部但可后续细化
+            pass
+        return pkg
+
 
 class ContextEngine:
     """Retrieve and assemble relevant memories for the current task."""
@@ -128,3 +172,16 @@ class ContextEngine:
             pkg.working_memory = hierarchical_memory.working_summary
 
         return pkg
+
+    def assemble_for_subagent(
+        self,
+        node_id: str,
+        research_state: ResearchState,
+        hierarchical_memory: Optional[HierarchicalMemory] = None,
+        top_k: int = 5,
+        max_chars: int = 4000,
+    ) -> ContextPackage:
+        """为特定子 Agent 节点组装并截断上下文。"""
+        pkg = self.assemble(research_state, hierarchical_memory=hierarchical_memory, top_k=top_k)
+        pkg = pkg.for_node(node_id)
+        return pkg.truncate(max_chars)
