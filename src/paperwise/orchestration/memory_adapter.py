@@ -53,6 +53,8 @@ class OrchestratorMemoryAdapter:
             self.workspace / ".paperwise" / user_id / "strategies", user_id=user_id
         )
         self.signal_generator = signal_generator or LearningSignalGenerator()
+        # 最近一次 apply_strategies_to_plan 实际应用的策略 id（用于 outcome 回写）
+        self._applied_strategy_ids: list[str] = []
 
     def assemble_context(self, research_state: ResearchState) -> ContextPackage:
         """为当前任务组装完整上下文。"""
@@ -175,7 +177,9 @@ class OrchestratorMemoryAdapter:
             return plan
 
         existing_ids = {t.id for t in plan.tasks}
+        self._applied_strategy_ids = []
         for strat in strategies:
+            applied = False
             for hint in strat.plan_hints:
                 spec = insertable.get(hint)
                 if spec is None or hint in existing_ids:
@@ -184,7 +188,22 @@ class OrchestratorMemoryAdapter:
                 deps = [d for d in preferred_deps if d in existing_ids]
                 plan.add(description, task_id=hint, depends_on=deps)
                 existing_ids.add(hint)
+                applied = True
+            if applied:
+                self._applied_strategy_ids.append(strat.strategy_id)
         return plan
+
+    def record_strategy_outcomes(self, success: bool) -> None:
+        """把本次执行结果回写到实际应用过的策略（P3.5 闭环）。
+
+        只统计真正改变了 Plan 的策略，未被应用的策略不受本轮结果影响。
+        """
+        for strategy_id in self._applied_strategy_ids:
+            try:
+                self.strategy_library.record_outcome(strategy_id, success)
+            except Exception:
+                pass
+        self._applied_strategy_ids = []
 
     def update_state_from_execution(
         self,

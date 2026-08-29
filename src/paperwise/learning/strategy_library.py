@@ -67,7 +67,13 @@ _SIGNAL_TO_STRATEGY: dict[str, tuple[str, list[str], list[str], str]] = {
 
 @dataclass
 class Strategy:
-    """一条可复用的规划策略。"""
+    """一条可复用的规划策略。
+
+    P3.5 起增加验证字段：
+    - ``success_count`` / ``failure_count``: record_outcome 累积的执行结果计数
+    - ``confidence``: 由计数推导的置信度（Laplace 平滑），用于选择时降权未验证策略
+    - ``expected_gain`` / ``actual_gain``: A/B 评测的预期与实际收益
+    """
 
     task_type: str
     name: str
@@ -79,7 +85,20 @@ class Strategy:
     source: str = "learned"            # learned | manual | signal
     success_rate: float = 0.5
     use_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    expected_gain: float = 0.0
+    actual_gain: float = 0.0
     last_used: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    @property
+    def confidence(self) -> float:
+        """Laplace 平滑置信度：观测越多，越接近真实成功率。
+
+        无观测时为先验 0.5——未验证的策略在选择中自动降权。
+        """
+        total = self.success_count + self.failure_count
+        return (self.success_count + 1) / (total + 2)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -138,26 +157,51 @@ class StrategyLibrary:
     ) -> list[Strategy]:
         """选择某类任务下最值得应用的策略。
 
-        按 success_rate 降序，同分时按 use_count 降序（置信度优先）。
+        排序键：(confidence, success_rate, use_count) 降序——
+        经过验证的策略优先，未验证策略（confidence 为先验 0.5）自动降权。
         """
         candidates = [
             s for s in self.strategies.values()
             if s.task_type == task_type and s.success_rate >= min_success_rate
         ]
-        candidates.sort(key=lambda s: (s.success_rate, s.use_count), reverse=True)
+        candidates.sort(
+            key=lambda s: (s.confidence, s.success_rate, s.use_count),
+            reverse=True,
+        )
         return candidates[:limit]
 
     # --------------------------------------------------------------- outcome
 
     def record_outcome(self, strategy_id: str, success: bool) -> Optional[Strategy]:
-        """滚动更新策略成功率（与 ProceduralMemory 相同的均值更新）。"""
+        """滚动更新策略成功率与验证计数。"""
         strat = self.strategies.get(strategy_id)
         if strat is None:
             return None
         strat.use_count += 1
+        if success:
+            strat.success_count += 1
+        else:
+            strat.failure_count += 1
         strat.success_rate = (
             strat.success_rate * (strat.use_count - 1) + (1.0 if success else 0.0)
         ) / strat.use_count
+        strat.last_used = datetime.now().isoformat()
+        self._save()
+        return strat
+
+    def record_evaluation(
+        self,
+        strategy_id: str,
+        actual_gain: float,
+        expected_gain: Optional[float] = None,
+    ) -> Optional[Strategy]:
+        """记录 A/B 评测得到的实际收益（P3.5 Learning Validation）。"""
+        strat = self.strategies.get(strategy_id)
+        if strat is None:
+            return None
+        strat.actual_gain = actual_gain
+        if expected_gain is not None:
+            strat.expected_gain = expected_gain
         strat.last_used = datetime.now().isoformat()
         self._save()
         return strat

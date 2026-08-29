@@ -45,7 +45,7 @@ Research Agent
 |------|--------|------|
 | L2 Workflow Agent | 90%+ | DAG + Multi-Agent + Review + Replan 完整 |
 | L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Experience Learning 第一版完成 |
-| L4 Self-improving Agent | 15~25% | P3 打开入口；经验 → 行为改变尚待验证（P3.5） |
+| L4 Self-improving Agent | 15~25% | P3 打开入口；P3.5 验证机制已落地，真实论文上的增益证据待积累 |
 | L5 Research-native Agent | <10% | Research Graph 未启动 |
 
 ### 1.1 P0→P3 已形成的闭环
@@ -345,22 +345,64 @@ class StrategyLibrary:
 
 ---
 
-## 6. 后续方向
+## 6. 当前已完成（Iteration 5: P3.5 — Learning Validation）
 
-> 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
-> 优先把 P3 的经验学习做成**可验证的闭环**（P3.5），再进入 P4。
+### 6.1 目标
 
-### P3.5：Learning Validation（下一迭代，最高优先级）⭐⭐⭐⭐⭐
-
-目标：验证 P3 产生的经验**是否真正让 Agent 变好**，打通
+验证 P3 产生的经验**是否真正让 Agent 变好**，打通
 `Experience → Strategy → Planning → Behavior → Improvement` 的证据链。
 
-- `Strategy` 扩展：`success_count` / `failure_count` / `confidence` /
-  `expected_gain` / `actual_gain`
-- Strategy Evaluation：同一任务对比"应用策略 vs 不应用策略"的 A/B 评测，
-  复用 P0 Trace + 评测框架产出可量化对比
-- Planner 依据验证后的成功率选择策略，低置信策略自动降权
-- 验收标准：能展示"某条 Strategy 从发现 → 应用 → 指标提升"的完整案例
+### 6.2 关键改动
+
+#### `Strategy` 验证字段（`learning/strategy_library.py`）
+- 新增 `success_count` / `failure_count` / `expected_gain` / `actual_gain`
+- 新增 `confidence` 属性：Laplace 平滑 `(success_count + 1) / (total + 2)`，
+  无观测时为先验 0.5
+- `select()` 排序键改为 `(confidence, success_rate, use_count)`：
+  **经过验证的策略优先，未验证策略自动降权**
+- `record_outcome()` 累积 success/failure 计数
+- 新增 `record_evaluation(strategy_id, actual_gain, expected_gain)`
+
+#### `learning/strategy_evaluator.py`（新增）
+```python
+class StrategyEvaluator:
+    def evaluate(self, strategy, tasks, run_fn, expected_gain=None) -> StrategyEvalReport: ...
+```
+- A/B 设计：同一批任务跑 baseline（strategy=None）与 treatment，
+  `actual_gain = mean(treatment) - mean(baseline)`
+- `run_fn` 由调用方注入（真实执行 + TraceEvaluator 打分，或测试 mock），
+  本模块不依赖 LLM，评测逻辑确定性
+- 评测结果自动回写 StrategyLibrary
+
+#### 执行结果回写闭环
+- `OrchestratorMemoryAdapter.apply_strategies_to_plan()` 记录**实际改变 Plan** 的策略 id
+- 新增 `OrchestratorMemoryAdapter.record_strategy_outcomes(success)`：
+  只回写真正被应用的策略；`SmartOrchestrator._run_complex()` 结束时调用
+
+### 6.3 完整证据链（验收标准对应的演示路径）
+
+```text
+Review 发现 critical（P3 learn_from_review）
+  → StrategyLibrary 生成 enforce-citations 策略
+  → 下次同类任务 apply_strategies_to_plan 插入 expand_evidence 节点
+  → 执行结束 record_strategy_outcomes 回写 success_count
+  → StrategyEvaluator A/B 验证 actual_gain > 0
+  → 策略 confidence 上升，select() 优先选中
+```
+
+### 6.4 测试
+
+新增 `tests/test_learning/test_strategy_evaluator.py`：10 个测试
+`tests/test_learning/test_memory_adapter_learning.py`：+1 个闭环测试
+
+learning 套件共 36 个测试通过；全量回归 181 通过（排除需真实 LLM 的集成测试）。
+
+---
+
+## 7. 后续方向
+
+> 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
+> 优先把 P3 的经验学习做成**可验证的闭环**（P3.5 ✅ 已完成机制），再进入 P4。
 
 ### P2 收尾：Dynamic DAG 成为主路径
 
@@ -402,25 +444,26 @@ class StrategyLibrary:
 
 ---
 
-## 7. 验收标准
+## 8. 验收标准
 
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
 | P0 | `pytest tests/test_evaluation/ -v` | 31/31 通过；`TraceStore.get_metrics` 指标正确；simple path trace 包含子 Agent 事件 |
 | P1 | `pytest tests/test_orchestration/test_memory_driven.py tests/test_memory/test_context_engine_orchestrator.py -v` | 11/11 通过；ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
 | P2 | `pytest tests/test_orchestration/test_capability_registry.py tests/test_orchestration/test_dynamic_planner.py -v` | 15/15 通过；DynamicDAGPlanner 生成拓扑合法 Plan |
-| P3 | `pytest tests/test_learning/ -v` | 25/25 通过；learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入 |
+| P3 | `pytest tests/test_learning/ -v` | learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入 |
+| P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略 |
 
 ---
 
-## 8. 已知问题
+## 9. 已知问题
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
 
 ---
 
-## 9. Git 工作流
+## 10. Git 工作流
 
 每个迭代：
 1. 代码改动 + 测试

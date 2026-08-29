@@ -436,5 +436,6 @@
  | 2026-08-29 | P2 动态 DAG Planner | ✅ 完成 | Capability Registry + DynamicDAGPlanner（默认关闭，静态兜底） |
  | 2026-08-30 | P3 经验学习 | ✅ 完成 | LearningSignal / FailurePattern / StrategyLibrary；修复 learn_procedure 与 _run_pptx_writer 两个存量 bug |
  | 2026-08-30 | 路线调整 | 📌 新方向 | 定位更新为"L3 骨架已成、向 L4 过渡"；插入 **P3.5 Learning Validation**（最高优先）；P4 重定位为 Research Opportunity Engine；新增 P4.5 Retrieval-native Paper Agent；详见实施 Spec 第 1、6 节 |
+ | 2026-08-30 | P3.5 Learning Validation | ✅ 完成 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
 
  > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。

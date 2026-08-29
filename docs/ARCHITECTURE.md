@@ -267,11 +267,13 @@ LearningSignalGenerator:  Reviewer findings / AgentTrace → 结构化学习信�
                            (hallucination / quality_gap / omission / node_failure /
                             planning_failure / instability / success)
 FailurePatternExtractor:  跨 trace 聚合失败模式（min_occurrences 阈值过滤噪声）
-StrategyLibrary:          策略库（plan_hints / avoid / success_rate 滚动更新）
+StrategyLibrary:          策略库（plan_hints / avoid / success_rate / confidence 滚动更新）
                            └─ 落盘 workspace/.paperwise/{user}/strategies/
+StrategyEvaluator:        A/B 验证策略收益（baseline vs treatment → actual_gain）
 
 闭环: Execute → Review → learn_from_review → StrategyLibrary
                                           → apply_strategies_to_plan → 下次规划
+                                          → record_strategy_outcomes 回写验证计数
 ```
 
 ---

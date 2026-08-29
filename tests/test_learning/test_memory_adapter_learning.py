@@ -82,3 +82,32 @@ def test_apply_strategies_to_plan_is_conservative(tmp_path):
     # 拓扑合法性保持
     from paperwise.orchestration.dynamic_planner import DynamicDAGPlanner
     assert DynamicDAGPlanner.is_topologically_valid(plan)
+
+
+def test_record_strategy_outcomes_closes_loop(tmp_path):
+    """P3.5：只有真正被应用的策略才收到 outcome 回写。"""
+    adapter = _adapter(tmp_path)
+    applied_strat = adapter.strategy_library.add_or_update(Strategy(
+        task_type="analysis", name="verify-numerics",
+        plan_hints=["verify_data"], success_rate=0.9, use_count=1,
+    ))
+    idle_strat = adapter.strategy_library.add_or_update(Strategy(
+        task_type="analysis", name="idle",
+        plan_hints=["unknown_node"], success_rate=0.9, use_count=1,
+    ))
+
+    adapter.apply_strategies_to_plan(_base_plan(), "analysis")
+    adapter.record_strategy_outcomes(success=True)
+
+    updated_applied = adapter.strategy_library.get(applied_strat.strategy_id)
+    assert updated_applied.success_count == 1
+    assert updated_applied.use_count == 2
+
+    # 未应用的策略不受影响
+    updated_idle = adapter.strategy_library.get(idle_strat.strategy_id)
+    assert updated_idle.success_count == 0
+    assert updated_idle.use_count == 1
+
+    # 回写后清单清空，不会重复计数
+    adapter.record_strategy_outcomes(success=True)
+    assert adapter.strategy_library.get(applied_strat.strategy_id).success_count == 1

@@ -330,6 +330,8 @@ class SmartOrchestrator:
           task_type=research_state.intent or "analysis",
           findings=final_findings,
       )
+      # P3.5: outcome 回写到实际应用过的策略，形成验证闭环
+      self.memory_adapter.record_strategy_outcomes(success)
 
       return result
 
