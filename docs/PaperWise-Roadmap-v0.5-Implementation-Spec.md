@@ -19,7 +19,7 @@ L4 Self-improving Agent
 L5 Research-native Agent
 ```
 
-当前状态（2026-08-29）：L2 基本完成，正在进入 L3。
+当前状态（2026-08-30）：L2 完成，L3（State-aware + Experience Learning）进行中。
 
 ---
 
@@ -216,13 +216,82 @@ class PlanCompositionPolicy:
 
 ---
 
-## 5. 后续方向（P3 及以后）
+## 5. 当前已完成（Iteration 4: P3 — Experience / Strategy Learning）
 
-### P3：Experience / Strategy Learning
-- 从 Agent Trace 中提取失败模式
-- Reviewer 升级为 Learning Signal Generator
-- Procedural Memory 驱动 Strategy Selection
-- 建立 Strategy Library
+### 5.1 目标
+建立 **Execute → Review → Learn → Re-plan** 的经验闭环：Reviewer 升级为
+Learning Signal Generator，执行轨迹聚合为失败模式，经验沉淀进 Strategy Library
+并驱动后续 Plan 组合。
+
+### 5.2 关键新增模块
+
+#### `src/paperwise/learning/signals.py`
+```python
+class LearningSignal:  # signal_type / source / severity / task_type / subject / detail
+    ...
+class LearningSignalGenerator:
+    def from_findings(self, findings: dict, task_type="analysis") -> list[LearningSignal]: ...
+    def from_trace(self, trace: AgentTrace, task_type="analysis") -> list[LearningSignal]: ...
+```
+- 信号类型：hallucination / quality_gap / omission / verification_gap /
+  node_failure / planning_failure / instability / success
+- 纯规则映射，不调用 LLM（Mechanism over prompt）
+
+#### `src/paperwise/learning/failure_patterns.py`
+```python
+class FailurePattern:  # category / subject / occurrences / trace_ids / example_messages
+    ...
+class FailurePatternExtractor:
+    def extract(self, traces: list[AgentTrace]) -> list[FailurePattern]: ...
+    def extract_from_store(self, store: TraceStore, limit=100) -> list[FailurePattern]: ...
+```
+- 聚合 NODE_FAILED / ERROR / RETRY / REPLAN 事件
+- `min_occurrences` 阈值过滤偶发噪声（默认 2）
+
+#### `src/paperwise/learning/strategy_library.py`
+```python
+class Strategy:  # task_type / name / plan_hints / avoid / success_rate / use_count
+    ...
+class StrategyLibrary:
+    def add_or_update(self, strategy) -> Strategy: ...            # 按 (task_type, name) 去重合并
+    def select(self, task_type, min_success_rate=0.5, limit=3) -> list[Strategy]: ...
+    def record_outcome(self, strategy_id, success) -> Strategy: ...  # 滚动更新成功率
+    def learn_from_signals(self, task_type, signals) -> list[Strategy]: ...
+```
+- 持久化复用 `StorageBackend`（SQLite / JSON），落盘 `workspace/.paperwise/{user}/strategies/`
+- 只有 critical/major 级信号才会生成或强化策略
+
+### 5.3 集成点
+
+- `OrchestratorMemoryAdapter` 新增 `strategy_library` / `signal_generator`
+- `OrchestratorMemoryAdapter.learn_from_review(task_type, findings)`：
+  findings -> signals -> strategy library
+- `OrchestratorMemoryAdapter.apply_strategies_to_plan(plan, task_type)`：
+  保守插入白名单节点（verify_data / expand_evidence），依赖必须已存在，保证拓扑合法
+- `SmartOrchestrator._run_complex()`：规划阶段调用 `apply_strategies_to_plan`；
+  review 循环结束后调用 `learn_from_review`
+
+### 5.4 顺带修复的存量 bug
+
+- `OrchestratorMemoryAdapter.learn_procedure()` 曾向 `ProceduralMemory.learn()`
+  传不存在的 `signature` 关键字参数，TypeError 被静默吞掉，程序性记忆从未真正写入；
+  已改为 `context_signature={"plan_signature": ...}`，并加回归测试。
+- `SmartOrchestrator._run_pptx_writer()` 构造 spec 后缺少
+  `return await self._run_sub_agent(...)`，导致 generate_pptx 节点必失败；已补上。
+
+### 5.5 测试
+
+新增 `tests/test_learning/`：
+- `test_signals.py`：7 个测试
+- `test_failure_patterns.py`：6 个测试
+- `test_strategy_library.py`：7 个测试
+- `test_memory_adapter_learning.py`：5 个测试
+
+全部 25 个测试通过；全量回归 170 通过（排除需真实 LLM 的集成测试）。
+
+---
+
+## 6. 后续方向（P4 及以后）
 
 ### P4：Proactive Research Intelligence
 - `ProactiveEngine` 从 Paper Recommender 升级为 Research Opportunity Detector
@@ -235,24 +304,25 @@ class PlanCompositionPolicy:
 
 ---
 
-## 6. 验收标准
+## 7. 验收标准
 
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
 | P0 | `pytest tests/test_evaluation/ -v` | 31/31 通过；`TraceStore.get_metrics` 指标正确；simple path trace 包含子 Agent 事件 |
 | P1 | `pytest tests/test_orchestration/test_memory_driven.py tests/test_memory/test_context_engine_orchestrator.py -v` | 11/11 通过；ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
 | P2 | `pytest tests/test_orchestration/test_capability_registry.py tests/test_orchestration/test_dynamic_planner.py -v` | 15/15 通过；DynamicDAGPlanner 生成拓扑合法 Plan |
+| P3 | `pytest tests/test_learning/ -v` | 25/25 通过；learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入 |
 
 ---
 
-## 7. 已知问题
+## 8. 已知问题
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
 
 ---
 
-## 8. Git 工作流
+## 9. Git 工作流
 
 每个迭代：
 1. 代码改动 + 测试

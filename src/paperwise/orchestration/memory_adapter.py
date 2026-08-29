@@ -13,6 +13,8 @@ from typing import Optional
 
 from paperwise.core.types import AgentResult, AgentTrace
 from paperwise.core.plan import Plan, Task
+from paperwise.learning.signals import LearningSignal, LearningSignalGenerator
+from paperwise.learning.strategy_library import StrategyLibrary
 from paperwise.memory.context_engine import ContextEngine, ContextPackage
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.episodic_memory import EpisodicMemory
@@ -30,6 +32,8 @@ class OrchestratorMemoryAdapter:
         context_engine: Optional[ContextEngine] = None,
         episodic_memory: Optional[EpisodicMemory] = None,
         procedural_memory: Optional[ProceduralMemory] = None,
+        strategy_library: Optional[StrategyLibrary] = None,
+        signal_generator: Optional[LearningSignalGenerator] = None,
     ):
         self.workspace = Path(workspace)
         self.user_id = user_id
@@ -45,6 +49,10 @@ class OrchestratorMemoryAdapter:
         self.procedural_memory = procedural_memory or ProceduralMemory(
             self.workspace / ".paperwise" / user_id / "procedures", user_id=user_id
         )
+        self.strategy_library = strategy_library or StrategyLibrary(
+            self.workspace / ".paperwise" / user_id / "strategies", user_id=user_id
+        )
+        self.signal_generator = signal_generator or LearningSignalGenerator()
 
     def assemble_context(self, research_state: ResearchState) -> ContextPackage:
         """为当前任务组装完整上下文。"""
@@ -125,12 +133,58 @@ class OrchestratorMemoryAdapter:
             preferred_steps = [t.id for t in plan.tasks]
             self.procedural_memory.learn(
                 task_type=task_type,
-                signature="|".join(preferred_steps[:6]),
                 preferred_steps=preferred_steps,
+                context_signature={"plan_signature": "|".join(preferred_steps[:6])},
                 success=success,
             )
         except Exception:
             pass
+
+    def learn_from_review(
+        self,
+        task_type: str,
+        findings: dict,
+    ) -> list[LearningSignal]:
+        """把 Reviewer findings 转换为学习信号并更新策略库。
+
+        Reviewer 由此升级为 Learning Signal Generator：
+        findings 不只用于当轮 revise，还沉淀为可复用的 Strategy。
+        """
+        try:
+            signals = self.signal_generator.from_findings(findings, task_type=task_type)
+            self.strategy_library.learn_from_signals(task_type, signals)
+            return signals
+        except Exception:
+            # 学习信号不应阻塞主流程
+            return []
+
+    def apply_strategies_to_plan(self, plan: Plan, task_type: str) -> Plan:
+        """根据策略库中的高置信策略补全 Plan（保守插入，不删除节点）。
+
+        只处理白名单中的可插入节点，且依赖节点必须已存在，
+        保证插入后 Plan 拓扑仍然合法。
+        """
+        insertable: dict[str, tuple[str, list[str]]] = {
+            # node_id: (description, preferred dependencies)
+            "verify_data": ("Verify numerical claims with code", ["read_paper"]),
+            "expand_evidence": ("Expand evidence and citations", ["analyze_method", "read_paper"]),
+        }
+        try:
+            strategies = self.strategy_library.select(task_type)
+        except Exception:
+            return plan
+
+        existing_ids = {t.id for t in plan.tasks}
+        for strat in strategies:
+            for hint in strat.plan_hints:
+                spec = insertable.get(hint)
+                if spec is None or hint in existing_ids:
+                    continue
+                description, preferred_deps = spec
+                deps = [d for d in preferred_deps if d in existing_ids]
+                plan.add(description, task_id=hint, depends_on=deps)
+                existing_ids.add(hint)
+        return plan
 
     def update_state_from_execution(
         self,

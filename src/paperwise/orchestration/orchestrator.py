@@ -195,6 +195,9 @@ class SmartOrchestrator:
       route = await self.classifier.classify(task)
       plan = self._select_plan(task, route, research_state)
       plan = self.memory_adapter.apply_gaps_to_plan(plan, research_state)
+      plan = self.memory_adapter.apply_strategies_to_plan(
+          plan, task_type=research_state.intent or "analysis"
+      )
       self.trace_collector.add_event(
           TraceEventType.PLAN_GENERATED,
           data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks], "dynamic": self.plan_policy.use_dynamic_plan},
@@ -321,6 +324,11 @@ class SmartOrchestrator:
           task_type=research_state.intent or "analysis",
           plan=plan,
           success=success,
+      )
+      # P3: Reviewer findings -> learning signals -> strategy library
+      self.memory_adapter.learn_from_review(
+          task_type=research_state.intent or "analysis",
+          findings=final_findings,
       )
 
       return result
@@ -529,6 +537,8 @@ class SmartOrchestrator:
           max_steps=35,
           enable_plan=True,
       )
+      return await self._run_sub_agent(spec, paper_dir)
+
   async def _run_reader(self, task: str, paper_dir: Path) -> AgentResult:
       """Run the Reader sub-agent."""
       spec = SubAgentSpec(

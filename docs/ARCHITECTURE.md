@@ -260,6 +260,20 @@ AgentSession:
   对话式: chat("帮我分析创新点") → chat("再详细点") → chat("生成报告") (持续)
 ```
 
+### 3.10 经验学习层 (`learning/`)
+
+```
+LearningSignalGenerator:  Reviewer findings / AgentTrace → 结构化学习信号
+                           (hallucination / quality_gap / omission / node_failure /
+                            planning_failure / instability / success)
+FailurePatternExtractor:  跨 trace 聚合失败模式（min_occurrences 阈值过滤噪声）
+StrategyLibrary:          策略库（plan_hints / avoid / success_rate 滚动更新）
+                           └─ 落盘 workspace/.paperwise/{user}/strategies/
+
+闭环: Execute → Review → learn_from_review → StrategyLibrary
+                                          → apply_strategies_to_plan → 下次规划
+```
+
 ---
 
 ## 4. 数据流图

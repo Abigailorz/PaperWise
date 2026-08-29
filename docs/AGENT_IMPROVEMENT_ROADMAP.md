@@ -426,3 +426,14 @@
  4. **每完成一个 P0/P1 项就更新本文件并打勾**，形成可追溯的改进日志。
 
  > 本文档应作为活的 design doc，每次重大改动后更新“落地路线图”中的进度。
+
+### 进度日志
+
+ | 日期 | 迭代 | 状态 | 说明 |
+ |------|------|------|------|
+ | 2026-08-29 | P0 Trace 基础设施 | ✅ 完成 | trace 收集/存储/评估闭环，31 个测试 |
+ | 2026-08-29 | P1 Memory → Decision | ✅ 完成 | ContextEngine 进入 Orchestrator，gaps 驱动 Plan |
+ | 2026-08-29 | P2 动态 DAG Planner | ✅ 完成 | Capability Registry + DynamicDAGPlanner（默认关闭，静态兜底） |
+ | 2026-08-30 | P3 经验学习 | ✅ 完成 | LearningSignal / FailurePattern / StrategyLibrary；修复 learn_procedure 与 _run_pptx_writer 两个存量 bug |
+
+ > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。

@@ -243,6 +243,11 @@
 4. ✅ 记忆管理 UI（查看/删除记忆卡）
 5. ✅ 用户数据隔离基础（X-User-Id → memory/kb 命名空间；完整认证后续）
 
+### P3 迭代修复的存量 bug（2026-08-30，2 项）
+
+1. ✅ `OrchestratorMemoryAdapter.learn_procedure()` 向 `ProceduralMemory.learn()` 传了不存在的 `signature` 参数，TypeError 被静默吞掉，程序性记忆从未真正写入（HIGH：静默失效）
+2. ✅ `SmartOrchestrator._run_pptx_writer()` 构造 spec 后缺少 `return`，generate_pptx 节点必然失败（HIGH：功能缺失）
+
 ### LOW（6 项）
 
 1. 语音 Agent
