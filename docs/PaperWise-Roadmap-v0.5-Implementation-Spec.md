@@ -9,17 +9,71 @@
 
 ```text
 L1 Tool Agent
-  ↓
+  │
+  │ ReAct + Tools + Guardrails
+  ▼
 L2 Workflow Agent
-  ↓
-L3 State-aware Agent
-  ↓
-L4 Self-improving Agent
-  ↓
+  │
+  │ DAG + Multi-Agent + Review + Replan
+  ▼
+L3 State-aware Agent        ← ★ 核心骨架已形成
+  │
+  │ Memory → Decision
+  │ Research State
+  │ Dynamic DAG
+  │ Experience
+  ▼
+L4 Self-improving Agent     ← ★ P3 刚打开入口
+  │
+  │ Reflection
+  │ Failure Attribution
+  │ Strategy Learning
+  │ Policy Learning
+  ▼
 L5 Research-native Agent
+  │
+  │ Research Graph / Opportunity / Hypothesis / Evidence
+  ▼
+Research Agent
 ```
 
-当前状态（2026-08-30）：L2 完成，L3（State-aware + Experience Learning）进行中。
+当前状态（2026-08-30）：**L3 核心骨架已形成，正在从 L3 向 L4 过渡。**
+
+成熟度宏观评估（架构维度，非严格工程指标）：
+
+| 层级 | 成熟度 | 说明 |
+|------|--------|------|
+| L2 Workflow Agent | 90%+ | DAG + Multi-Agent + Review + Replan 完整 |
+| L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Experience Learning 第一版完成 |
+| L4 Self-improving Agent | 15~25% | P3 打开入口；经验 → 行为改变尚待验证（P3.5） |
+| L5 Research-native Agent | <10% | Research Graph 未启动 |
+
+### 1.1 P0→P3 已形成的闭环
+
+```text
+Memory → Planning → DAG → Execute → Review → Trace → Learning → Memory / Strategy
+```
+
+- P0 Trace：我做了什么？
+- P1 Memory → Decision：我知道用户是谁、过去做过什么
+- P2 Dynamic DAG：我知道应该怎么规划
+- P3 Experience Learning：我知道上一次哪里做得不好
+
+### 1.2 战略定位
+
+PaperWise 的目标**不是**通用 Coding Agent（Codex / Claude Code 的方向），
+而是 **Research-native Agent**——竞争点是研究工作流的智能化程度：
+
+```text
+Papers → Methods → Evidence → Research Questions
+      → Experiments → Research State → Research Opportunities
+```
+
+### 1.3 下一阶段必须用评测数据回答的三个问题
+
+1. 它是否因为"记得"而做得更好？（Memory → Decision → Better Result）
+2. 它是否因为"经历过"而做得更好？（Experience → Strategy → Better Future Execution）
+3. 它是否能发现用户没有明确提出、但对研究有价值的事情？（Research State → Opportunity → Proactive Action）
 
 ---
 
@@ -291,16 +345,60 @@ class StrategyLibrary:
 
 ---
 
-## 6. 后续方向（P4 及以后）
+## 6. 后续方向
 
-### P4：Proactive Research Intelligence
-- `ProactiveEngine` 从 Paper Recommender 升级为 Research Opportunity Detector
-- 支持 Knowledge Gap、Contradiction、Missing Evidence、New Method 等 Opportunity 类型
-- 论文推荐只是 Action 之一
+> 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
+> 优先把 P3 的经验学习做成**可验证的闭环**（P3.5），再进入 P4。
 
-### P5：Research-native Intelligence
-- 构建 Research Graph（User - Project - Question - Paper - Method - Evidence - Experiment - Hypothesis）
-- Agent 参与研究本身，而非仅执行指定任务
+### P3.5：Learning Validation（下一迭代，最高优先级）⭐⭐⭐⭐⭐
+
+目标：验证 P3 产生的经验**是否真正让 Agent 变好**，打通
+`Experience → Strategy → Planning → Behavior → Improvement` 的证据链。
+
+- `Strategy` 扩展：`success_count` / `failure_count` / `confidence` /
+  `expected_gain` / `actual_gain`
+- Strategy Evaluation：同一任务对比"应用策略 vs 不应用策略"的 A/B 评测，
+  复用 P0 Trace + 评测框架产出可量化对比
+- Planner 依据验证后的成功率选择策略，低置信策略自动降权
+- 验收标准：能展示"某条 Strategy 从发现 → 应用 → 指标提升"的完整案例
+
+### P2 收尾：Dynamic DAG 成为主路径
+
+- Dynamic DAG 默认开启；Static DAG 降级为 regression safety net
+- Runtime validation + Replan 稳定化
+- 原则保持：**Node Capability 受控（Registry 白名单），Graph Composition 动态**；
+  不允许 LLM 自由发明节点
+
+### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐
+
+`ProactiveEngine` 从"论文推荐器"升级为"研究机会探测器"：
+
+- Opportunity 类型：KnowledgeGap / MissingEvidence / Contradiction /
+  MethodComplementarity / NewMethod
+- 触发源：DAG 执行事件 + ResearchState + KnowledgeBase（在执行中发现，
+  而非定时推送）
+- Action 多样化：推荐论文 / 建议实验 / 建议查证 / 建议补充 Related Work /
+  建议新增 Ablation / 建议调整研究方向
+
+### P4.5：Retrieval-native Paper Agent（与 P4 并行）⭐⭐⭐⭐⭐
+
+解决当前最大技术债——"全文进上下文"：
+
+- PDF 解析后按章节/段落 chunk 化，保留 section / 行号 / 图表 metadata
+- Dense + Sparse 混合检索 + Rerank
+- DAG 节点按需取 Evidence，引用强制接地（Citation Grounding）
+- 解决 Context Window / Cost / Attention Dilution / Retrieval Noise 四个问题
+
+### P5：Research Graph ⭐⭐⭐⭐
+
+- 实体：User - Project - Question - Paper - Method - Evidence - Experiment - Hypothesis
+- 从 Paper-centric knowledge 升级为 Research-centric knowledge
+- P4 的 Opportunity Detection 成熟后再启动
+
+### P6：Multi-Agent Collaboration ⭐⭐⭐
+
+- Shared Blackboard / Agent Protocol / Role Negotiation / Delegation / Conflict Resolution
+- 超越当前 Orchestrator 单向调度
 
 ---
 
