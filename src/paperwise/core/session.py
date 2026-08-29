@@ -230,7 +230,7 @@ class AgentSession(AgentLoopMixin):
         complexity = classifier.classify(user_message)
         return complexity.is_complex
 
-    async def _run_orchestrated(self, user_message: str) -> str:
+    async def _run_orchestrated(self, user_message: str) -> AgentResult:
         """Run a complex task through SmartOrchestrator and inject a summary into the session."""
         paper_dir = Path(self.state.current_paper)
         orchestrator = SmartOrchestrator(
@@ -257,7 +257,19 @@ class AgentSession(AgentLoopMixin):
         from paperwise.core.types import Message
         self.state.messages.append(Message(role=Role.SYSTEM, content=summary))
         self._hierarchical_memory.add_turn(Message(role=Role.SYSTEM, content=summary))
-        return result.final_output
+        return result
+
+    def _make_chat_result(self, final_output: str, success: bool = True, error_message: str = "") -> AgentResult:
+        """根据当前 session 状态构造 AgentResult。"""
+        return AgentResult(
+            final_output=final_output,
+            messages=list(self.state.messages),
+            steps=self._total_steps,
+            tool_stats=dict(getattr(self, "_tool_call_count", {})),
+            success=success,
+            error_message=error_message,
+            tokens_used=0,
+        )
 
     async def chat(self, user_message: str) -> str:
 
@@ -283,9 +295,9 @@ class AgentSession(AgentLoopMixin):
                 TraceEventType.ROUTER_DECISION,
                 data={"routed_to": "orchestrator", "reason": "complex_task"},
             )
-            response = await self._run_orchestrated(user_message)
-            self.trace_collector.end_trace()
-            return response
+            result = await self._run_orchestrated(user_message)
+            self.trace_collector.end_trace(result)
+            return result.final_output
 
         # 每轮对话重置工具暴露（避免上一轮 skill 的工具绑定泄漏到本轮）
         if hasattr(self.tools, "activate_all"):
@@ -341,13 +353,14 @@ class AgentSession(AgentLoopMixin):
                         data={"reason": reason, "step": self._total_steps},
                         step=self._total_steps,
                     )
-                    self.trace_collector.end_trace()
-                    return (
+                    response = (
                         f"[会话因 {reason} 暂停]\n"
                         "分析过程较长，我已收集了一些信息。\n"
                         "需要我先基于目前的发现生成一个初步回复吗？\n"
                         "或者你可以让我'继续'来完成分析。"
                     )
+                    self.trace_collector.end_trace(self._make_chat_result(response, success=True))
+                    return response
 
                 # Pre-LLM 钩子
                 self.harness.pre_llm(self._build_agent_state())
@@ -450,7 +463,7 @@ class AgentSession(AgentLoopMixin):
                         )
                         if complete:
                             self._save()
-                            self.trace_collector.end_trace()
+                            self.trace_collector.end_trace(self._make_chat_result(response.content, success=True))
                             return response.content
                         # 未通过：给反馈继续迭代
                         self._consecutive_text_responses = 0
@@ -468,7 +481,7 @@ class AgentSession(AgentLoopMixin):
 
                     # 普通对话回复直接返回
                     self._save()
-                    self.trace_collector.end_trace()
+                    self.trace_collector.end_trace(self._make_chat_result(response.content, success=True))
                     return response.content
 
                 else:
@@ -477,8 +490,9 @@ class AgentSession(AgentLoopMixin):
                         content="我似乎没想好如何回应，让我换个思路...",
                     )
                     self.state.messages.append(fallback)
-                    self.trace_collector.end_trace()
-                    return "抱歉，我遇到了一些问题。能换一种方式描述你的需求吗？"
+                    response = "抱歉，我遇到了一些问题。能换一种方式描述你的需求吗？"
+                    self.trace_collector.end_trace(self._make_chat_result(response, success=False, error_message="empty_response"))
+                    return response
 
                 self.trace_collector.add_event(
                     TraceEventType.STEP_END,
@@ -494,12 +508,13 @@ class AgentSession(AgentLoopMixin):
                 data={"reason": "hard_cap", "step": self._total_steps},
                 step=self._total_steps,
             )
-            self.trace_collector.end_trace()
-            return (
+            response = (
                 "分析过程较长，我已经收集了一些信息。\n"
                 "需要我先基于目前的发现生成一个初步回复吗？\n"
                 "或者你可以让我'继续'来完成分析。"
             )
+            self.trace_collector.end_trace(self._make_chat_result(response, success=True))
+            return response
 
         except Exception as e:
             import traceback
@@ -508,8 +523,9 @@ class AgentSession(AgentLoopMixin):
                 data={"exception": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()[-500:]},
                 step=self._total_steps,
             )
-            self.trace_collector.end_trace()
-            return f"抱歉，处理你的请求时遇到了错误：{type(e).__name__}: {e}"
+            response = f"抱歉，处理你的请求时遇到了错误：{type(e).__name__}: {e}"
+            self.trace_collector.end_trace(self._make_chat_result(response, success=False, error_message=str(e)))
+            return response
 
     # ══════════ 退出条件 ══════════
 

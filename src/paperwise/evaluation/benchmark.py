@@ -6,6 +6,8 @@
 - 过程指标：工具调用有效率、路径效率、幻觉率
 """
 
+from __future__ import annotations
+
 import json
 import time
 import asyncio
@@ -13,6 +15,9 @@ import math
 from pathlib import Path
 from dataclasses import dataclass, field
 from collections import defaultdict
+
+
+from typing import Any, Optional
 
 
 @dataclass
@@ -26,6 +31,8 @@ class EvalRun:
     duration: float
     rubric_scores: dict = field(default_factory=dict)
     hallucination_count: int = 0
+    trace_score: Optional[float] = None
+    trace_details: dict = field(default_factory=dict)
     error: str = ""
 
 
@@ -43,6 +50,7 @@ class BenchmarkResult:
     tool_efficiency: float   # 工具调用有效率
     hallucination_rate: float
     success_rate: float      # 单次成功率
+    avg_trace_score: Optional[float] = None
 
 
 class PassKEvaluator:
@@ -57,8 +65,10 @@ class PassKEvaluator:
         )
     """
 
-    def __init__(self, k: int = 5):
+    def __init__(self, k: int = 5, trace_evaluator: Optional[Any] = None, trace_store: Optional[Any] = None):
         self.k = k
+        self.trace_evaluator = trace_evaluator
+        self.trace_store = trace_store
 
     async def evaluate(
         self,
@@ -71,9 +81,22 @@ class PassKEvaluator:
 
         for i in range(self.k):
             t0 = time.time()
+            trace_score = None
+            trace_details = {}
             try:
                 result = await run_fn()
                 score = await rubric_fn(result.final_output)
+                if self.trace_evaluator and result.trace_id:
+                    try:
+                        trace_eval = await self.trace_evaluator.evaluate_result(result, self.trace_store)
+                        trace_score = trace_eval.get("score")
+                        trace_details = {
+                            "passed": trace_eval.get("passed"),
+                            "details": trace_eval.get("details"),
+                            "metrics": trace_eval.get("metrics"),
+                        }
+                    except Exception:
+                        pass
                 runs.append(EvalRun(
                     run_id=i + 1,
                     success=result.success,
@@ -83,6 +106,8 @@ class PassKEvaluator:
                     duration=time.time() - t0,
                     rubric_scores=score.get("scores", {}),
                     hallucination_count=score.get("hallucinations", 0),
+                    trace_score=trace_score,
+                    trace_details=trace_details,
                 ))
             except Exception as e:
                 runs.append(EvalRun(
@@ -109,6 +134,8 @@ class PassKEvaluator:
             / max(len(runs), 1)
         )
         hall_rate = sum(r.hallucination_count for r in runs) / max(len(runs), 1)
+        trace_scores = [r.trace_score for r in runs if r.trace_score is not None]
+        avg_trace_score = sum(trace_scores) / max(len(trace_scores), 1) if trace_scores else None
 
         # 工具效率
         valid_calls = sum(r.tool_stats.get("grep", 0) + r.tool_stats.get("read_file", 0)
@@ -122,6 +149,7 @@ class PassKEvaluator:
             avg_steps=avg_steps, avg_duration=avg_duration,
             avg_rubric=avg_rubric, tool_efficiency=tool_eff,
             hallucination_rate=hall_rate, success_rate=p_single,
+            avg_trace_score=avg_trace_score,
         )
 
     def format_report(self, result: BenchmarkResult) -> str:

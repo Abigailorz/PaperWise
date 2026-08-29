@@ -9,6 +9,8 @@
 - ExecutionGrader: 执行稳健性
 """
 
+from __future__ import annotations
+
 import re
 import json
 from dataclasses import dataclass
@@ -30,7 +32,7 @@ class TraceMetricsExtractor:
         replans = [ev for ev in events if ev.type == TraceEventType.REPLAN]
         retries = [ev for ev in events if ev.type == TraceEventType.RETRY]
         step_starts = [ev for ev in events if ev.type == TraceEventType.STEP_START]
-        node_ends = [ev for ev in events if ev.type == TraceEventType.NODE_END]
+        node_ends = [ev for ev in events if ev.type in (TraceEventType.NODE_END, TraceEventType.NODE_DONE)]
         node_failures = [ev for ev in events if ev.type == TraceEventType.NODE_FAILED]
         review_rounds = [ev for ev in events if ev.type == TraceEventType.REVIEW_ROUND]
 
@@ -479,3 +481,42 @@ class TraceEvaluator:
             "errors": grade.errors,
             "raw": grade.raw,
         }
+
+    async def evaluate_result(self, agent_result: AgentResult, store: Optional[Any] = None) -> dict[str, Any]:
+        """根据 AgentResult 中记录的 trace_id 评估对应轨迹。"""
+        if not agent_result.trace_id:
+            return {
+                "trace_id": None,
+                "metrics": {},
+                "score": 0.0,
+                "passed": False,
+                "details": "No trace_id in AgentResult",
+                "errors": ["missing trace_id"],
+                "raw": {},
+            }
+        return await self.evaluate_by_id(agent_result.trace_id, store)
+
+    async def evaluate_by_id(self, trace_id: str, store: Optional[Any] = None) -> dict[str, Any]:
+        """按 trace_id 从 store 读取并评估；未传 store 则构造空 trace 返回失败信息。"""
+        if store is None:
+            return {
+                "trace_id": trace_id,
+                "metrics": {},
+                "score": 0.0,
+                "passed": False,
+                "details": "No TraceStore provided",
+                "errors": ["missing trace_store"],
+                "raw": {},
+            }
+        trace = store.get(trace_id)
+        if trace is None:
+            return {
+                "trace_id": trace_id,
+                "metrics": {},
+                "score": 0.0,
+                "passed": False,
+                "details": f"Trace {trace_id} not found",
+                "errors": ["trace_not_found"],
+                "raw": {},
+            }
+        return await self.evaluate(trace)

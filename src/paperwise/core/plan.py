@@ -12,6 +12,7 @@ class TaskStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     DONE = "done"
     FAILED = "failed"
+    NEEDS_REPLAN = "needs_replan"
 
 
 @dataclass
@@ -153,12 +154,21 @@ class Plan:
                 "in_progress": "[>]",
                 "done": "[x]",
                 "failed": "[!]",
+                "needs_replan": "[?]",
             }[t.status.value]
             lines.append(f"  {icon} [{t.id}] {t.description}")
             if t.evidence:
                 lines.append(f"      evidence: {t.evidence[:80]}")
         lines.append("</task_plan>")
         return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        return {
+            "tasks": [t.to_dict() for t in self.tasks],
+            "current_task_id": self.current_task_id,
+            "done": self.done,
+            "progress": self.progress,
+        }
 
     def to_todo_items(self) -> list[dict]:
         return [

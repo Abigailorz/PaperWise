@@ -103,6 +103,10 @@ class ResearchStateManager:
         state.mark_updated()
         self._save()
 
+    def save(self, state: ResearchState) -> None:
+        """Public alias for update, used by orchestrator."""
+        self.update(state)
+
     def add_finding(self, node_id: str, claim: str, evidence: str = "", confidence: float = 0.8) -> None:
         state = self.get()
         if state is None:

@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from paperwise.core.types import AgentResult, ToolCall
-from paperwise.evaluation import RubricEvaluator, HallucinationDetector
+from paperwise.evaluation.rubric import RubricEvaluator
+from paperwise.evaluation.hallucination import HallucinationDetector
 
 
 @dataclass

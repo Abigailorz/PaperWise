@@ -4,12 +4,14 @@
 支持按 trace_id、session_id、时间范围查询。
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from paperwise.core.types import AgentTrace
+from paperwise.core.types import AgentTrace, TraceEventType
 from paperwise.memory.storage import create_storage, StorageBackend
 
 
@@ -78,6 +80,16 @@ class TraceStore:
         traces.sort(key=lambda t: t.start_time, reverse=True)
         return traces[offset:offset + limit]
 
+    def list_sessions(self) -> list[str]:
+        """返回所有出现过的 session_id 列表（去重）。"""
+        keys = self.store.list_keys(self.COLLECTION)
+        sessions: set[str] = set()
+        for key in keys:
+            trace = self.get(key)
+            if trace and trace.session_id:
+                sessions.add(trace.session_id)
+        return sorted(sessions)
+
     def delete(self, trace_id: str) -> bool:
         """删除指定轨迹。"""
         return self.store.delete(self.COLLECTION, trace_id)
@@ -94,10 +106,10 @@ class TraceStore:
 
         events = trace.events
         tool_events = [ev for ev in events if ev.type.value.endswith("_end") and ev.type.value.startswith("tool_")]
-        llm_events = [ev for ev in events if ev.type == "llm_end"]
-        error_events = [ev for ev in events if ev.type == "error"]
-        replan_events = [ev for ev in events if ev.type == "replan"]
-        retry_events = [ev for ev in events if ev.type == "retry"]
+        llm_events = [ev for ev in events if ev.type == TraceEventType.LLM_END]
+        error_events = [ev for ev in events if ev.type == TraceEventType.ERROR]
+        replan_events = [ev for ev in events if ev.type == TraceEventType.REPLAN]
+        retry_events = [ev for ev in events if ev.type == TraceEventType.RETRY]
 
         tool_stats: dict[str, int] = {}
         for ev in tool_events:

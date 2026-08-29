@@ -136,6 +136,7 @@ class SmartOrchestrator:
           llm_client=self.llm,
           harness=harness,
           workspace_dir=paper_dir,
+          trace_collector=self.trace_collector,
       )
 
       # Inject a minimal plan: read paper, then answer
@@ -192,8 +193,8 @@ class SmartOrchestrator:
           config=ExecutionConfig(
               enable_replan=True,
               replan_callback=self._replan,
+              trace_collector=self.trace_collector,
           ),
-          trace_collector=self.trace_collector,
       )
       executor.register_condition("requires_pptx", self._condition_requires_pptx)
       executor.register_condition("requires_verification", self._condition_requires_verification)
