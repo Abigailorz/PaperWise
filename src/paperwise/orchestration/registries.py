@@ -359,7 +359,7 @@ class NodeRegistry:
         self.register(
             NodeSpec(
                 id="revision",
-                category="generation",
+                category="revision",
                 name="Revision Writer",
                 description="Revise artifacts based on critic findings.",
                 input_schema={"report": "ReportArtifact", "critic_result": "CriticResult"},

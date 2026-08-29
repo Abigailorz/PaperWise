@@ -19,7 +19,11 @@ from paperwise.orchestration.paper_dag import PaperDAGPlanner
 from paperwise.orchestration.specs import SubAgentSpec, PaperAnalysisPipeline, parse_findings
 from paperwise.orchestration.types import GraphState, NodeSpec
 from paperwise.orchestration.dag_executor import DAGExecutor, build_plan_from_workflow, ExecutionConfig, DAGExecutorError
-from paperwise.orchestration.dynamic_planner import DynamicDAGPlanner, PlanCompositionPolicy
+from paperwise.orchestration.dynamic_planner import (
+    DynamicDAGPlanner,
+    PlanCompositionPolicy,
+    to_executable_plan,
+)
 from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
@@ -44,7 +48,7 @@ class SmartOrchestrator:
       classifier: Optional[TaskClassifier] = None,
       max_review_rounds: int = 3,
       trace_collector: Optional[TraceCollector] = None,
-      use_dynamic_plan: bool = False,
+      use_dynamic_plan: bool = True,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -223,19 +227,8 @@ class SmartOrchestrator:
       )
       executor.register_condition("requires_pptx", self._condition_requires_pptx)
       executor.register_condition("requires_verification", self._condition_requires_verification)
-      executor.register_handler("read_paper", self._handle_read_paper)
-      executor.register_handler("verify_data", self._handle_verify_data)
-      executor.register_handler("analyze_method", self._handle_analyze_method)
-      executor.register_handler("generate_report", self._handle_generate_report)
-      executor.register_handler("generate_pptx", self._handle_generate_pptx)
-      executor.register_handler("review_report", self._handle_review_report)
-      executor.register_handler("revise_report", self._handle_revise_report)
-      # Corrective nodes produced by ReplanAgent
-      executor.register_handler("re_read_section", self._handle_read_paper)
-      executor.register_handler("re_verify_with_code", self._handle_verify_data)
-      executor.register_handler("revision", self._handle_revise_report)
-      executor.register_handler("expand_evidence", self._handle_analyze_method)
-      executor.register_handler("dynamic_research", self._handle_analyze_method)
+      for node_id, handler in self._handler_map().items():
+          executor.register_handler(node_id, handler)
 
       total_steps = 0
       final_findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
@@ -370,12 +363,40 @@ class SmartOrchestrator:
       )
       return plan
 
+  def _handler_map(self) -> dict:
+      """可执行节点 -> handler 的映射（动态/静态 Plan 共用的受控节点集合）。"""
+      return {
+          "read_paper": self._handle_read_paper,
+          "verify_data": self._handle_verify_data,
+          "analyze_method": self._handle_analyze_method,
+          "generate_report": self._handle_generate_report,
+          "generate_pptx": self._handle_generate_pptx,
+          "review_report": self._handle_review_report,
+          "revise_report": self._handle_revise_report,
+          # Corrective nodes produced by ReplanAgent
+          "re_read_section": self._handle_read_paper,
+          "re_verify_with_code": self._handle_verify_data,
+          "revision": self._handle_revise_report,
+          "expand_evidence": self._handle_analyze_method,
+          "dynamic_research": self._handle_analyze_method,
+      }
+
   def _select_plan(self, task: str, route, research_state: ResearchState) -> Plan:
-      """根据配置选择静态 Plan 或动态 Plan。"""
+      """根据配置选择动态 Plan（主路径）或静态 Plan（safety net）。
+
+      动态路径：build_plan -> 拓扑校验 -> 折叠为可执行节点 -> 再次校验
+      （拓扑 + 所有节点均有已注册 handler）。任一环节失败回退静态 Plan。
+      """
       if self.plan_policy.use_dynamic_plan:
           plan = self.dynamic_planner.build_plan(task, route, research_state, self.plan_policy)
-          if DynamicDAGPlanner.is_topologically_valid(plan) and plan.tasks:
-              return plan
+          if plan.tasks and DynamicDAGPlanner.is_topologically_valid(plan):
+              exec_plan = to_executable_plan(plan)
+              if (
+                  exec_plan.tasks
+                  and DynamicDAGPlanner.is_topologically_valid(exec_plan)
+                  and all(t.id in self._handler_map() for t in exec_plan.tasks)
+              ):
+                  return exec_plan
           # 动态规划失败时回退到静态 Plan
       return self._build_complex_plan(task)
 

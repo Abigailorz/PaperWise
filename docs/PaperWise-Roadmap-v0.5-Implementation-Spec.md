@@ -44,7 +44,7 @@ Research Agent
 | 层级 | 成熟度 | 说明 |
 |------|--------|------|
 | L2 Workflow Agent | 90%+ | DAG + Multi-Agent + Review + Replan 完整 |
-| L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Experience Learning 第一版完成 |
+| L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Dynamic DAG 成为主路径；Experience Learning 第一版完成 |
 | L4 Self-improving Agent | 15~25% | P3 打开入口；P3.5 验证机制已落地，真实论文上的增益证据待积累 |
 | L5 Research-native Agent | <10% | Research Graph 未启动 |
 
@@ -237,7 +237,7 @@ class DynamicDAGPlanner:
     def is_topologically_valid(plan: Plan) -> bool: ...
 
 class PlanCompositionPolicy:
-    use_dynamic_plan: bool = False  # 默认关闭，保留静态 fallback
+    use_dynamic_plan: bool = False  # P2 时默认关闭；P2 收尾（见第 7 节）起 Orchestrator 默认开启
 ```
 
 #### `registries.py` 扩展
@@ -256,7 +256,7 @@ class PlanCompositionPolicy:
 
 ### 4.3 集成点
 
-- `SmartOrchestrator.__init__` 增加 `use_dynamic_plan: bool = False`
+- `SmartOrchestrator.__init__` 增加 `use_dynamic_plan: bool = False`（P2 收尾起默认 `True`）
 - `SmartOrchestrator._select_plan()` 在启用时调用 `DynamicDAGPlanner.build_plan`
 - 动态 Plan 生成失败自动回退到静态 `_build_complex_plan`
 
@@ -399,17 +399,49 @@ learning 套件共 36 个测试通过；全量回归 181 通过（排除需真�
 
 ---
 
-## 7. 后续方向
+## 7. 当前已完成（Iteration 6: P2 收尾 — Dynamic DAG 成为主路径）
+
+### 7.1 目标
+
+Dynamic DAG 默认开启；Static DAG 降级为 regression safety net。
+原则：**Node Capability 受控（Registry 白名单 + 已注册 handler），Graph Composition 动态。**
+
+### 7.2 关键改动
+
+#### 动态 → 可执行适配层（`orchestration/dynamic_planner.py`）
+```python
+EXECUTABLE_NODE_IDS / NODE_TO_EXECUTABLE / executable_id_for(node_id)
+def to_executable_plan(plan: Plan) -> Plan: ...
+```
+- DynamicDAGPlanner 自由组合 Registry 节点；执行前折叠为 SmartOrchestrator
+  已注册 handler 的可执行节点（如 report_outline/section/assemble → generate_report）
+- 依赖在可执行空间重建：去自依赖、去重、max_retries 取最大
+- 折叠出的节点自动附加条件门：generate_pptx→requires_pptx、
+  verify_data→requires_verification、revise_report→critic_has_issues（干净审查不再白跑 revision）
+- 未知节点保守归入 analyze_method，保证 Plan 永远可执行
+
+#### Orchestrator
+- `use_dynamic_plan` 默认改为 `True`
+- handler 注册收敛为 `_handler_map()`，注册与校验共用同一映射，防止漂移
+- `_select_plan()`：build → 拓扑校验 → `to_executable_plan` → 再校验
+  （拓扑 + 全部节点有 handler）→ 任一环节失败回退静态 `_build_complex_plan`
+
+#### Registry 修正
+- `revision` 节点 category 从 `generation` 改为 `revision`（优先级 6），
+  修复"先改后审"的语义倒置
+
+### 7.3 测试
+
+新增 `tests/test_orchestration/test_executable_plan.py`：8 个测试
+（映射、折叠、依赖重建、条件门、默认开启动态、静态回退）。
+全量回归 190 通过（排除需真实 LLM 的集成测试）。
+
+---
+
+## 8. 后续方向
 
 > 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
 > 优先把 P3 的经验学习做成**可验证的闭环**（P3.5 ✅ 已完成机制），再进入 P4。
-
-### P2 收尾：Dynamic DAG 成为主路径
-
-- Dynamic DAG 默认开启；Static DAG 降级为 regression safety net
-- Runtime validation + Replan 稳定化
-- 原则保持：**Node Capability 受控（Registry 白名单），Graph Composition 动态**；
-  不允许 LLM 自由发明节点
 
 ### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐
 
@@ -444,7 +476,7 @@ learning 套件共 36 个测试通过；全量回归 181 通过（排除需真�
 
 ---
 
-## 8. 验收标准
+## 9. 验收标准
 
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
@@ -453,17 +485,18 @@ learning 套件共 36 个测试通过；全量回归 181 通过（排除需真�
 | P2 | `pytest tests/test_orchestration/test_capability_registry.py tests/test_orchestration/test_dynamic_planner.py -v` | 15/15 通过；DynamicDAGPlanner 生成拓扑合法 Plan |
 | P3 | `pytest tests/test_learning/ -v` | learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入 |
 | P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略 |
+| P2 收尾 | `pytest tests/test_orchestration/test_executable_plan.py -v` | 8/8 通过；动态 Plan 折叠后只含可执行节点；动态失败回退静态 |
 
 ---
 
-## 9. 已知问题
+## 10. 已知问题
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
 
 ---
 
-## 10. Git 工作流
+## 11. Git 工作流
 
 每个迭代：
 1. 代码改动 + 测试

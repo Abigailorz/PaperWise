@@ -24,6 +24,145 @@ class PlanCompositionPolicy:
     force_dynamic_keywords: tuple[str, ...] = ("dynamic", "custom", "adaptive")
 
 
+# ---------------------------------------------------------------------------
+# 动态 Plan -> 可执行 Plan 适配层
+#
+# 原则（见实施 Spec 第 7 节 P2 收尾）：**Node Capability 受控，Graph Composition 动态**。
+# DynamicDAGPlanner 可以自由组合 Registry 中的节点，但最终执行前必须映射到
+# SmartOrchestrator 已注册 handler 的可执行节点集合——LLM / planner 不能发明
+# 没有 handler 的节点并让它真正运行。
+# ---------------------------------------------------------------------------
+
+#: SmartOrchestrator 已注册 handler 的可执行节点
+EXECUTABLE_NODE_IDS: frozenset[str] = frozenset({
+    "read_paper",
+    "analyze_method",
+    "verify_data",
+    "generate_report",
+    "generate_pptx",
+    "review_report",
+    "revise_report",
+    # ReplanAgent 产出的纠正节点
+    "re_read_section",
+    "re_verify_with_code",
+    "revision",
+    "expand_evidence",
+    "dynamic_research",
+})
+
+#: Registry 节点 -> 可执行节点的映射。
+#: 多个细粒度 registry 节点折叠为同一个可执行节点（其 handler 内部完成完整子流程，
+#: 例如 report_outline/section/assemble 都由 report writer 一个子 Agent 完成）。
+NODE_TO_EXECUTABLE: dict[str, str] = {
+    "parse_pdf": "read_paper",
+    "extract_text": "read_paper",
+    "problem_analysis": "analyze_method",
+    "method_analysis": "analyze_method",
+    "experiment_analysis": "analyze_method",
+    "related_work_analysis": "analyze_method",
+    "synthesis": "analyze_method",
+    "summarize": "analyze_method",
+    "evidence_verification": "verify_data",
+    "report_outline": "generate_report",
+    "report_section": "generate_report",
+    "report_assemble": "generate_report",
+    "ppt_outline": "generate_pptx",
+    "ppt_slide": "generate_pptx",
+    "ppt_assemble": "generate_pptx",
+    "critic": "review_report",
+    # "revision" 本身是可执行的纠正节点（有注册 handler），但动态 Plan 中出现时
+    # 统一收敛到 revise_report，避免与审查循环里的 revise 节点重复
+    "revision": "revise_report",
+}
+
+#: 未注册且未映射的节点的保守归宿
+DEFAULT_EXECUTABLE_NODE = "analyze_method"
+
+#: 可执行节点的规范描述（与静态 Plan 保持一致）
+EXECUTABLE_NODE_DESCRIPTIONS: dict[str, str] = {
+    "read_paper": "Read paper and extract facts",
+    "analyze_method": "Analyze methodology and main claims",
+    "verify_data": "Verify numerical claims with code",
+    "generate_report": "Generate structured analysis report",
+    "generate_pptx": "Generate academic presentation slides",
+    "review_report": "Adversarially review the output",
+    "revise_report": "Revise the output based on review findings",
+    "re_read_section": "Re-read specific section of the paper",
+    "re_verify_with_code": "Re-verify numerical claims with code",
+    "revision": "Revise the output based on review findings",
+    "expand_evidence": "Expand evidence and citations",
+    "dynamic_research": "Dynamic research on open questions",
+}
+
+#: 映射后需要附加条件门的可执行节点（与静态 Plan 行为一致，节省 token）
+_EXECUTABLE_CONDITIONS: dict[str, str] = {
+    "generate_pptx": "requires_pptx",
+    "verify_data": "requires_verification",
+    # 审查干净时跳过修改，避免白跑一轮 revision writer
+    "revise_report": "critic_has_issues",
+}
+
+
+def executable_id_for(node_id: str) -> str:
+    """把任意节点 id 映射为可执行节点 id。显式映射优先于透传。"""
+    if node_id in NODE_TO_EXECUTABLE:
+        return NODE_TO_EXECUTABLE[node_id]
+    if node_id in EXECUTABLE_NODE_IDS:
+        return node_id
+    return DEFAULT_EXECUTABLE_NODE
+
+
+def to_executable_plan(plan: Plan) -> Plan:
+    """把动态组合 Plan 折叠为只含可执行节点的 Plan。
+
+    - 多个 registry 节点折叠为同一可执行节点时，依赖关系在可执行空间重建，
+      去掉自依赖、去重，max_retries 取最大值
+    - 已是可执行节点的任务原样保留（描述 / 条件 / 重试等字段不变）
+    - 折叠出的 generate_pptx / verify_data 附加条件门，与静态 Plan 一致
+    """
+    id_map = {t.id: executable_id_for(t.id) for t in plan.tasks}
+    exec_plan = Plan()
+    added: set[str] = set()
+
+    for task in plan.tasks:
+        exec_id = id_map[task.id]
+        if exec_id in added:
+            existing = exec_plan.get(exec_id)
+            if existing is not None:
+                existing.max_retries = max(existing.max_retries, task.max_retries)
+            continue
+
+        deps: list[str] = []
+        for dep in task.depends_on:
+            mapped = id_map.get(dep, executable_id_for(dep))
+            if mapped != exec_id and mapped not in deps:
+                deps.append(mapped)
+
+        if task.id == exec_id:
+            # 已是可执行节点：原样透传
+            exec_plan.add(
+                task.description,
+                depends_on=deps,
+                task_id=exec_id,
+                parallel_group=task.parallel_group,
+                condition=task.condition,
+                max_retries=task.max_retries,
+                output_artifact=task.output_artifact,
+                confidence_threshold=task.confidence_threshold,
+            )
+        else:
+            exec_plan.add(
+                EXECUTABLE_NODE_DESCRIPTIONS.get(exec_id, f"Run {exec_id}"),
+                depends_on=deps,
+                task_id=exec_id,
+                condition=_EXECUTABLE_CONDITIONS.get(exec_id),
+                max_retries=task.max_retries,
+            )
+        added.add(exec_id)
+
+    return exec_plan
+
+
 class DynamicDAGPlanner:
     """基于 capability 和 registry 动态构建 Plan。"""
 
@@ -113,7 +252,7 @@ class DynamicDAGPlanner:
             cat = node.category if node else "general"
             categories.setdefault(cat, []).append(nid)
 
-        # 固定优先级：input -> extraction -> research -> reasoning -> generation -> verification
+        # 固定优先级：input -> extraction -> research -> reasoning -> generation -> verification -> revision
         priority = {
             "input": 0,
             "extraction": 1,
@@ -121,7 +260,8 @@ class DynamicDAGPlanner:
             "reasoning": 3,
             "generation": 4,
             "verification": 5,
-            "general": 6,
+            "revision": 6,
+            "general": 7,
         }
         sorted_cats = sorted(categories.keys(), key=lambda c: priority.get(c, 99))
 

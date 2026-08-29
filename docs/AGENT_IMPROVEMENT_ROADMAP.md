@@ -433,7 +433,8 @@
  |------|------|------|------|
  | 2026-08-29 | P0 Trace 基础设施 | ✅ 完成 | trace 收集/存储/评估闭环，31 个测试 |
  | 2026-08-29 | P1 Memory → Decision | ✅ 完成 | ContextEngine 进入 Orchestrator，gaps 驱动 Plan |
- | 2026-08-29 | P2 动态 DAG Planner | ✅ 完成 | Capability Registry + DynamicDAGPlanner（默认关闭，静态兜底） |
+ | 2026-08-29 | P2 动态 DAG Planner | ✅ 完成 | Capability Registry + DynamicDAGPlanner |
+ | 2026-08-30 | P2 收尾：动态主路径 | ✅ 完成 | Dynamic DAG 默认开启；新增动态→可执行适配层（节点受控、组合动态）；静态 Plan 降级为 safety net |
  | 2026-08-30 | P3 经验学习 | ✅ 完成 | LearningSignal / FailurePattern / StrategyLibrary；修复 learn_procedure 与 _run_pptx_writer 两个存量 bug |
  | 2026-08-30 | 路线调整 | 📌 新方向 | 定位更新为"L3 骨架已成、向 L4 过渡"；插入 **P3.5 Learning Validation**（最高优先）；P4 重定位为 Research Opportunity Engine；新增 P4.5 Retrieval-native Paper Agent；详见实施 Spec 第 1、6 节 |
  | 2026-08-30 | P3.5 Learning Validation | ✅ 完成 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
