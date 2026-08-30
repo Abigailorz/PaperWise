@@ -29,6 +29,7 @@ from paperwise.memory.research_state import ResearchState, ResearchStateManager,
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
 from paperwise.opportunity.action_planner import ActionPlanner
+from paperwise.opportunity.surfacer import OpportunitySurfacer
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -71,6 +72,7 @@ class SmartOrchestrator:
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.opportunity_detector = OpportunityDetector()
       self.action_planner = ActionPlanner()
+      self.opportunity_surfacer = OpportunitySurfacer()
       self.enable_opportunity_actions = enable_opportunity_actions
       self.opportunity_act_threshold = opportunity_act_threshold
       self.max_review_rounds = max_review_rounds
@@ -192,9 +194,21 @@ class SmartOrchestrator:
               error_message="missing_text_md",
           )
 
+      # P4 Phase 3: 新任务来临时，surface 历史中相关的 pending 机会（主动但不打扰）
+      surfaced_opps = []
+      try:
+          prior_state = self.research_state_manager.get()
+          if prior_state and prior_state.opportunities:
+              surfaced_opps = self.opportunity_surfacer.surface(task, prior_state.opportunities)
+      except Exception:
+          surfaced_opps = []
+
       research_state = self.research_state_manager.new(current_task=task)
       research_state.current_paper = str(paper_dir)
       research_state.dag_status = "running"
+      # 把 surfaced 的历史机会带入新状态，避免被 new() 覆盖丢失
+      for opp in surfaced_opps:
+          research_state.add_opportunity(opp)
       self.research_state_manager.save(research_state)
 
       context_package = self.memory_adapter.assemble_context(research_state)
@@ -296,6 +310,9 @@ class SmartOrchestrator:
               f"{final_findings['major']} major issues after {self.max_review_rounds} rounds]\n\n"
               + final_text
           )
+      # P4 Phase 3: 把相关的历史 pending 机会提示附加到输出（非侵入）
+      if surfaced_opps:
+          final_text += self.opportunity_surfacer.surface_note(surfaced_opps)
       recommendations = await self.proactive_engine.decide(research_state)
       research_state.next_steps = [r.title for r in recommendations]
       self.research_state_manager.save(research_state)

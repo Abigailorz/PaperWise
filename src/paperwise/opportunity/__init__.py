@@ -25,6 +25,7 @@ from paperwise.opportunity.action_planner import (
     ActionPlanner,
     ActionResult,
 )
+from paperwise.opportunity.surfacer import OpportunitySurfacer
 
 __all__ = [
     "EvidenceRef",
@@ -38,4 +39,5 @@ __all__ = [
     "ActionPlanner",
     "ActionResult",
     "ACTION_TO_NODE",
+    "OpportunitySurfacer",
 ]
