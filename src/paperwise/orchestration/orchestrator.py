@@ -600,7 +600,10 @@ class SmartOrchestrator:
 
   async def _handle_analyze_method(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
-      return paper_dir / "facts.json"
+      facts_path = paper_dir / "facts.json"
+      if not facts_path.exists():
+          raise RuntimeError("facts.json missing: read_paper must succeed first")
+      return facts_path
 
   async def _handle_generate_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
@@ -629,7 +632,10 @@ class SmartOrchestrator:
   async def _handle_review_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_reviewer(state.get_artifact("task_text"), paper_dir)
-      findings = parse_findings(paper_dir / "review" / "findings.md")
+      findings_path = paper_dir / "review" / "findings.md"
+      if not result.success or not findings_path.exists():
+          raise RuntimeError(result.error_message or "reviewer failed")
+      findings = parse_findings(findings_path)
       state.set_artifact("critic_result", findings)
       return findings
 
@@ -710,7 +716,7 @@ class SmartOrchestrator:
           ),
           allowed_tools=["read_file", "grep", "write_file"],
           output_path="facts.json",
-          max_steps=12,
+          max_steps=25,
       )
       return await self._run_sub_agent(spec, paper_dir)
 
