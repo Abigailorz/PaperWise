@@ -28,6 +28,7 @@ from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
+from paperwise.opportunity.action_planner import ActionPlanner
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -50,6 +51,8 @@ class SmartOrchestrator:
       max_review_rounds: int = 3,
       trace_collector: Optional[TraceCollector] = None,
       use_dynamic_plan: bool = True,
+      enable_opportunity_actions: bool = False,
+      opportunity_act_threshold: float = 0.7,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -67,6 +70,9 @@ class SmartOrchestrator:
       self.plan_policy = PlanCompositionPolicy(use_dynamic_plan=use_dynamic_plan)
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
       self.opportunity_detector = OpportunityDetector()
+      self.action_planner = ActionPlanner()
+      self.enable_opportunity_actions = enable_opportunity_actions
+      self.opportunity_act_threshold = opportunity_act_threshold
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
       self._current_context_xml: str = ""
@@ -220,17 +226,7 @@ class SmartOrchestrator:
       state.set_artifact("context_xml", context_package.to_xml())
       state.set_artifact("research_state_id", research_state.state_id)
 
-      executor = DAGExecutor(
-          config=ExecutionConfig(
-              enable_replan=True,
-              replan_callback=self._replan,
-              trace_collector=self.trace_collector,
-          ),
-      )
-      executor.register_condition("requires_pptx", self._condition_requires_pptx)
-      executor.register_condition("requires_verification", self._condition_requires_verification)
-      for node_id, handler in self._handler_map().items():
-          executor.register_handler(node_id, handler)
+      executor = self._make_executor()
 
       total_steps = 0
       final_findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
@@ -345,6 +341,12 @@ class SmartOrchestrator:
           # 机会检测不应阻塞主流程
           pass
 
+      # P4 Phase 2: 高置信机会 -> Action DAG（depth=1，默认关闭以节省 token）
+      try:
+          await self._act_on_opportunities(research_state, paper_dir)
+      except Exception:
+          pass
+
       return result
 
   def _build_complex_plan(self, task: str) -> Plan:
@@ -399,6 +401,82 @@ class SmartOrchestrator:
           "expand_evidence": self._handle_analyze_method,
           "dynamic_research": self._handle_analyze_method,
       }
+
+  def _make_executor(self) -> DAGExecutor:
+      """构建一个带完整 handler / condition 注册的 DAG 执行器。
+
+      主任务 DAG 与机会行动 DAG 共用，保证可执行节点集合一致（节点受控）。
+      """
+      executor = DAGExecutor(
+          config=ExecutionConfig(
+              enable_replan=True,
+              replan_callback=self._replan,
+              trace_collector=self.trace_collector,
+          ),
+      )
+      executor.register_condition("requires_pptx", self._condition_requires_pptx)
+      executor.register_condition("requires_verification", self._condition_requires_verification)
+      for node_id, handler in self._handler_map().items():
+          executor.register_handler(node_id, handler)
+      return executor
+
+  async def _act_on_opportunities(
+      self,
+      research_state: ResearchState,
+      paper_dir: Path,
+  ) -> list:
+      """P4 Phase 2：把高置信 pending 机会转化为 depth=1 的 Action DAG 执行。
+
+      防递归：行动 DAG 在 depth=1 运行，且内部不再触发机会检测。
+      默认关闭（enable_opportunity_actions=False），避免未经确认就消耗 token。
+      """
+      from paperwise.opportunity.action_planner import ActionResult
+
+      if not self.enable_opportunity_actions:
+          return []
+
+      actionable = [
+          o for o in research_state.get_active_opportunities()
+          if o.confidence >= self.opportunity_act_threshold
+      ]
+      results = []
+      for opp in actionable:
+          self.action_planner.mark_acting(opp)
+          plan = self.action_planner.to_executable(
+              self.action_planner.build_action_plan(opp)
+          )
+          state = GraphState(
+              task=research_state.current_task,
+              budget={
+                  "token_limit": self.base_config.token_budget,
+                  "step_limit": self.base_config.max_steps,
+              },
+          )
+          state.set_artifact("paper_dir", paper_dir)
+          state.set_artifact("task_text", research_state.current_task)
+          state.set_artifact("research_state_id", research_state.state_id)
+          executor = self._make_executor()
+          try:
+              exec_result = await executor.run(plan, state, self._emit_progress)
+              result = ActionResult(
+                  opportunity_id=opp.opportunity_id,
+                  success=exec_result.get("success", False),
+                  completed_nodes=list(exec_result.get("completed_nodes", [])),
+                  failed_nodes=list(exec_result.get("failed_nodes", [])),
+                  error_message=exec_result.get("error_message", ""),
+              )
+          except Exception as e:
+              result = ActionResult(
+                  opportunity_id=opp.opportunity_id,
+                  success=False,
+                  error_message=str(e),
+              )
+          self.action_planner.write_back(opp, result)
+          results.append(result)
+
+      if results:
+          self.research_state_manager.save(research_state)
+      return results
 
   def _select_plan(self, task: str, route, research_state: ResearchState) -> Plan:
       """根据配置选择动态 Plan（主路径）或静态 Plan（safety net）。

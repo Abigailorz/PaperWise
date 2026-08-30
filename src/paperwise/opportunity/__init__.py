@@ -20,6 +20,11 @@ from paperwise.opportunity.models import (
 from paperwise.opportunity.detector import OpportunityDetector, OpportunityPolicy
 from paperwise.opportunity.evidence import EvidenceVerifier
 from paperwise.opportunity.scorer import OpportunityScorer
+from paperwise.opportunity.action_planner import (
+    ACTION_TO_NODE,
+    ActionPlanner,
+    ActionResult,
+)
 
 __all__ = [
     "EvidenceRef",
@@ -30,4 +35,7 @@ __all__ = [
     "OpportunityPolicy",
     "EvidenceVerifier",
     "OpportunityScorer",
+    "ActionPlanner",
+    "ActionResult",
+    "ACTION_TO_NODE",
 ]
