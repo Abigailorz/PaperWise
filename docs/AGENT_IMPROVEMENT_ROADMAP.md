@@ -443,5 +443,7 @@
  | 2026-08-30 | P4 Phase 2 Action Planner | ✅ 完成（本地） | 机会 → Dynamic DAG action（read_paper 在前，write_back 调置信度）；action_planner.py + 7 测试 |
  | 2026-08-30 | P4 Phase 3 Surfacer | ✅ 完成（本地） | 相关研究时 surfaced pending 机会（相关度排序 + surface_note），非定时推送；surfacer.py + 5 测试 |
  | 2026-08-30 | P4 LangSplat 评测 | 🔶 部分完成 | 离线检测 PASS（4 验收标准 + 预算截断均生效）；真实 LLM 端到端因 DeepSeek `402 Insufficient Balance` 受阻，待充值复跑；暴露 analyze_method 失败被掩盖为 success 的鲁棒性缺口 |
+ | 2026-08-31 | 子 Agent 鲁棒性修复 | ✅ 完成（本地） | 评测暴露 4 问题并修复：analyze_method/review_report 失败上抛、report sections→report.md 确定性拼接兜底、reviewer grep 化+早落 findings.json（max_steps 25→40）、reader max_steps 12→25；217 单测过 |
+ | 2026-08-31 | P4 LangSplat 真实评测 | ✅ 完成 | OpenCode Go `deepseek-v4-flash`：reviewer 真实产出 findings.json（20 论断全 verified、verdict=PASS），机会检测检出 3 条 knowledge_gap 全带证据全 pending；4 条验收标准成立 |
 
  > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。

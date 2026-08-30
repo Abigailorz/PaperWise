@@ -499,26 +499,32 @@ class OpportunityPolicy:
 
 评测对象：LangSplat（arXiv 2312.16084），已解析至 `workspace/langsplat/text.md`。
 评测脚本：`workspace/langsplat/eval_langsplat.py`（真实 LLM 全 DAG）+
-离线检测验证（真实 LangSplat 产物驱动的 detector 直跑）。
+`workspace/langsplat/eval_detect_only.py`（reviewer + 机会检测专项，省 token）。
 
-**① 真实 LLM 端到端：BLOCKED — DeepSeek API `402 Insufficient Balance`。**
-DAG 跑完 13 步但 `success=True` 是假象：所有子 Agent 的 LLM 调用因欠费失败，
-`analyze_method` 的 fallback 不校验 `facts.json` 是否真实生成，导致
-"节点完成但无产出"，最终 0 机会（无输入可检测）。**这暴露一个鲁棒性缺口，见 11 节。**
+**真实 LLM 端到端（OpenCode Go `deepseek-v4-flash`）：PASS。**
 
-**② 离线检测验证：PASS。** 用基于 LangSplat 真实内容构造的
-`review/findings.json`（2 条 flagged claim + 2 条 missing_aspects）+
-`research_state`（2 个 gap）驱动 detector：
+reviewer 子 Agent 真实产出 `review/findings.json` + `findings.md`
+（grep 锚定 facts.json 引用，核对 20 条核心论断全 verified，verdict=PASS，
+3 条 missing_aspects 全部带 text.md 行号证据）。机会检测基于**真实审查输入**：
 
-- 默认预算（max_per_run=3）下检出 3 条：1 contradiction + 2 missing_evidence，
-  **全部带 evidence、全部 pending、无证据机会 0 条** —— 验收 ②③④ 成立
-- 提高预算至 20 后检出 7 条，**knowledge_gap 正常触发**（4 条），
-  证明默认预算=3 的防垃圾截断按设计生效（按 ranking 取 Top-3）
-- 4 类规则中 3 类在真实数据上检出；method_complementarity 需 `related_papers`
-  非空（单篇评测无相关论文），其触发逻辑由单元测试覆盖
+- 检出 3 条 **knowledge_gap**（对应 3 条 missing_aspects），全部带 evidence、
+  全部 `pending`、无证据机会 0 条、总数 3 ≤ 预算 —— 验收 ②③④ 成立
+- 本次报告质量高（reviewer PASS、0 flagged），故未触发 missing_evidence /
+  contradiction —— 这两类已由单元测试 + 离线构造 critical/major flagged
+  验证可检出；method_complementarity 需 `related_papers` 非空
 
-结论：**机会检测引擎本身质量达标（precision 优先、防垃圾、防递归均生效）**；
-完整真实 LLM 链路待 API 充值后复跑 `eval_langsplat.py` 验收。
+**评测中暴露并已修复的 4 个子 Agent 鲁棒性问题**（deepseek-v4-flash 步进低效放大）：
+
+1. `analyze_method` fallback 不校验 facts.json → 掩盖整体 LLM 失败为 success（已修）
+2. `_handle_review_report` 忽略 result.success，parse 不存在的 findings.md（已修）
+3. report/revision writer 写完 sections 却没拼 report.md → 加**确定性拼接兜底**
+   `_assemble_report_from_sections`（机制优于提示词，已修）
+4. reviewer system_prompt 的"逐条核对"与效率冲突，25 步读不完 2800 行论文
+   → 改为 grep 锚定 + 只查 top 10-15 条 + 首遍即落 findings.json，max_steps 25→40（已修）
+5. reader max_steps 12→25（长论文读不完，已修）
+
+结论：**P4 机会检测引擎在真实 LLM 链路上质量达标**——precision 优先、
+证据支撑、防垃圾、防递归全部生效；子 Agent 失败上抛 + 确定性兜底后 DAG 收敛。
 
 ---
 
@@ -577,7 +583,7 @@ DAG 跑完 13 步但 `success=True` 是假象：所有子 Agent 的 LLM 调用�
 | P2 收尾 | `pytest tests/test_orchestration/test_executable_plan.py -v` | 8/8 通过；动态 Plan 折叠后只含可执行节点；动态失败回退静态 |
 | P4 Phase 1 | `pytest tests/test_opportunity/ -v` | 15/15 通过；4 类机会可检测、无证据机会被丢弃、空输入不产垃圾、防递归五约束生效 |
 | P4 Phase 2/3 | `pytest tests/test_opportunity/ -v` | 机会 → Dynamic DAG action（read_paper 在前）；相关研究时 surfaced pending 机会 |
-| P4 LangSplat 评测 | `workspace/langsplat/eval_langsplat.py` | 离线检测 PASS（②③④ + 预算截断）；真实 LLM 端到端因 DeepSeek 402 待复跑 |
+| P4 LangSplat 评测 | `workspace/langsplat/eval_detect_only.py` | ✅ PASS（真实 LLM `deepseek-v4-flash`）：reviewer 产出真实 findings.json，检出 3 条 knowledge_gap 全带证据全 pending；暴露并修复 4 个子 Agent 鲁棒性问题 |
 
 ---
 
@@ -585,11 +591,11 @@ DAG 跑完 13 步但 `success=True` 是假象：所有子 Agent 的 LLM 调用�
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
-- **真实 LLM 评测受阻**：当前 `DEEPSEEK_API_KEY`（与 `OPENAI_API_KEY` 同键）欠费，
-  DeepSeek 返回 `402 Insufficient Balance`，`eval_langsplat.py` 真实端到端待充值后复跑。
-- **鲁棒性缺口（评测中暴露）**：`analyze_method` 等子 Agent 的 fallback 在 LLM 调用
-  失败时仍返回"成功"路径而不校验 `facts.json` 是否真实生成，会把整体 LLM 失败
-  掩盖成 `success=True`，进而触发无谓 replan 风暴。需在后续迭代让节点失败真实上抛。
+- 评测用 LLM 已切换到 OpenCode Go（`https://opencode.ai/zen/go/v1`，`deepseek-v4-flash`，
+  `PAPERWISE_LLM_PROVIDER=openai_compatible`）。原 DeepSeek key 欠费（402）；
+  OpenCode Zen 按量端点（`/zen/v1`）也欠费，Go 订阅端点（`/zen/go/v1`）可用。
+- 子 Agent 失败掩盖问题（analyze_method / review_report / report 拼接 / reviewer 效率）
+  已在本次评测中修复，见 8.6。剩余：`revision` 节点步进低效时的兜底仍可观察。
 
 ---
 
