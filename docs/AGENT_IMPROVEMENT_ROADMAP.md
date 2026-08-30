@@ -440,5 +440,8 @@
  | 2026-08-30 | P3.5 Learning Validation | ✅ 机制完成 / 🔶 证据待积累 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
  | 2026-08-30 | P4 架构设计 | 📐 设计稿落盘 | 编码前完成边界定义与 10 问 Gap Analysis；锁死 4 种机会类型 + 防递归五约束；详见 `docs/OPPORTUNITY_ENGINE_DESIGN.md` |
  | 2026-08-30 | P4 Phase 1 机会检测 | 🚧 Phase 1 完成 | opportunity/ 包：4 类确定性规则 + 证据验证 + 三维打分 + 防递归五约束；机会只落 pending（不推送/不执行）；15 测试通过 |
+ | 2026-08-30 | P4 Phase 2 Action Planner | ✅ 完成（本地） | 机会 → Dynamic DAG action（read_paper 在前，write_back 调置信度）；action_planner.py + 7 测试 |
+ | 2026-08-30 | P4 Phase 3 Surfacer | ✅ 完成（本地） | 相关研究时 surfaced pending 机会（相关度排序 + surface_note），非定时推送；surfacer.py + 5 测试 |
+ | 2026-08-30 | P4 LangSplat 评测 | 🔶 部分完成 | 离线检测 PASS（4 验收标准 + 预算截断均生效）；真实 LLM 端到端因 DeepSeek `402 Insufficient Balance` 受阻，待充值复跑；暴露 analyze_method 失败被掩盖为 success 的鲁棒性缺口 |
 
  > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。

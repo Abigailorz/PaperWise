@@ -495,6 +495,31 @@ class OpportunityPolicy:
 ① 4 类机会都能检测 ② 无证据机会被丢弃 ③ 空输入/无锚点输入不产垃圾
 ④ depth/budget/dedup/pending-only 防递归约束生效。全量回归 205 通过。
 
+### 8.6 LangSplat 端到端评测（2026-08-30）
+
+评测对象：LangSplat（arXiv 2312.16084），已解析至 `workspace/langsplat/text.md`。
+评测脚本：`workspace/langsplat/eval_langsplat.py`（真实 LLM 全 DAG）+
+离线检测验证（真实 LangSplat 产物驱动的 detector 直跑）。
+
+**① 真实 LLM 端到端：BLOCKED — DeepSeek API `402 Insufficient Balance`。**
+DAG 跑完 13 步但 `success=True` 是假象：所有子 Agent 的 LLM 调用因欠费失败，
+`analyze_method` 的 fallback 不校验 `facts.json` 是否真实生成，导致
+"节点完成但无产出"，最终 0 机会（无输入可检测）。**这暴露一个鲁棒性缺口，见 11 节。**
+
+**② 离线检测验证：PASS。** 用基于 LangSplat 真实内容构造的
+`review/findings.json`（2 条 flagged claim + 2 条 missing_aspects）+
+`research_state`（2 个 gap）驱动 detector：
+
+- 默认预算（max_per_run=3）下检出 3 条：1 contradiction + 2 missing_evidence，
+  **全部带 evidence、全部 pending、无证据机会 0 条** —— 验收 ②③④ 成立
+- 提高预算至 20 后检出 7 条，**knowledge_gap 正常触发**（4 条），
+  证明默认预算=3 的防垃圾截断按设计生效（按 ranking 取 Top-3）
+- 4 类规则中 3 类在真实数据上检出；method_complementarity 需 `related_papers`
+  非空（单篇评测无相关论文），其触发逻辑由单元测试覆盖
+
+结论：**机会检测引擎本身质量达标（precision 优先、防垃圾、防递归均生效）**；
+完整真实 LLM 链路待 API 充值后复跑 `eval_langsplat.py` 验收。
+
 ---
 
 ## 9. 后续方向
@@ -502,7 +527,7 @@ class OpportunityPolicy:
 > 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
 > 优先把 P3 的经验学习做成**可验证的闭环**（P3.5 ✅ 已完成机制），再进入 P4。
 
-### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐  🚧 Phase 1 已完成
+### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐  ✅ Phase 1/2/3 已完成（评测见 8.6）
 
 > **架构设计与 Gap Analysis：`docs/OPPORTUNITY_ENGINE_DESIGN.md`**
 > **Phase 1（检测+落盘 pending）已实现，见第 8 节。**
@@ -515,8 +540,8 @@ class OpportunityPolicy:
 - 触发源：DAG 执行 Trace + ResearchState findings + reviewer findings.json
 - 防递归：Opportunity Budget / Depth Limit / Confidence Threshold /
   Cooldown+Dedup / User Interrupt Policy
-- 三阶段落地：Phase 1 检测 ✅ → Phase 2 Action Planner（机会进 Dynamic DAG）⬜
-  → Phase 3 Proactive 升级（pending 机会按需 surfaced）⬜
+- 三阶段落地：Phase 1 检测 ✅ → Phase 2 Action Planner（机会进 Dynamic DAG）✅
+  → Phase 3 Proactive 升级（pending 机会按需 surfaced）✅（均只本地提交，未推送）
 
 ### P4.5：Retrieval-native Paper Agent（与 P4 并行）⭐⭐⭐⭐⭐
 
@@ -551,6 +576,8 @@ class OpportunityPolicy:
 | P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略。**状态：机制完成，真实增益证据待积累** |
 | P2 收尾 | `pytest tests/test_orchestration/test_executable_plan.py -v` | 8/8 通过；动态 Plan 折叠后只含可执行节点；动态失败回退静态 |
 | P4 Phase 1 | `pytest tests/test_opportunity/ -v` | 15/15 通过；4 类机会可检测、无证据机会被丢弃、空输入不产垃圾、防递归五约束生效 |
+| P4 Phase 2/3 | `pytest tests/test_opportunity/ -v` | 机会 → Dynamic DAG action（read_paper 在前）；相关研究时 surfaced pending 机会 |
+| P4 LangSplat 评测 | `workspace/langsplat/eval_langsplat.py` | 离线检测 PASS（②③④ + 预算截断）；真实 LLM 端到端因 DeepSeek 402 待复跑 |
 
 ---
 
@@ -558,6 +585,11 @@ class OpportunityPolicy:
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
+- **真实 LLM 评测受阻**：当前 `DEEPSEEK_API_KEY`（与 `OPENAI_API_KEY` 同键）欠费，
+  DeepSeek 返回 `402 Insufficient Balance`，`eval_langsplat.py` 真实端到端待充值后复跑。
+- **鲁棒性缺口（评测中暴露）**：`analyze_method` 等子 Agent 的 fallback 在 LLM 调用
+  失败时仍返回"成功"路径而不校验 `facts.json` 是否真实生成，会把整体 LLM 失败
+  掩盖成 `success=True`，进而触发无谓 replan 风暴。需在后续迭代让节点失败真实上抛。
 
 ---
 
