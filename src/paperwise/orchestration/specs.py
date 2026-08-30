@@ -110,15 +110,16 @@ DO NOT modify the report. Only review and flag.""",
    c. If NOT found, flag as potential hallucination
 4. Check numerical claims: re-verify all numbers against the paper
 5. Check completeness: are all important aspects covered?
-6. Save findings to:
-   - review/findings.md (human-readable, using the structure above)
-   - review/findings.json (machine-readable, using the exact JSON schema)
+6. EARLY: after a first pass over report.md, immediately save your current
+   findings to review/findings.json (machine-readable, exact schema above).
+   Then refine and also write review/findings.md. This guarantees a
+   machine-readable artifact even if you run low on steps.
 
 CRITICAL: Be adversarial. If you cannot find evidence for a claim, flag it.
 Do not assume the report is correct. The user depends on your thoroughness.""",
             allowed_tools=["read_file", "grep", "glob", "write_file"],
             output_path="review/findings.md",
-            max_steps=25,
+            max_steps=40,
             enable_plan=True,
         )
 
