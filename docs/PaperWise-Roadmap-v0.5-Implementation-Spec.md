@@ -24,8 +24,10 @@ L4 Self-improving Agent          🔶 P3 刚打开入口
   │  Failure Attribution         ⬜
   │  Policy Learning             ⬜
   ▼
-L4+ Proactive Research Agent     ⬜ P4 Research Opportunity Engine
-  │  （设计稿已落盘，见 OPPORTUNITY_ENGINE_DESIGN.md）
+L4+ Proactive Research Agent     🚧 P4 Research Opportunity Engine
+  │  Phase 1 Opportunity Detection  ✅（检测+pending 落盘）
+  │  Phase 2 Action Planner         ⬜（机会进 Dynamic DAG）
+  │  Phase 3 Proactive 升级         ⬜（pending 按需 surfaced）
   ▼
 P4.5 Retrieval-native Agent      ⬜ Chunking / Hybrid Retrieval / Evidence Pack / Citation Grounding
   ▼
@@ -434,14 +436,76 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 
 ---
 
-## 8. 后续方向
+## 8. 当前已完成（Iteration 7: P4 Phase 1 — Opportunity Detection）
+
+### 8.1 目标
+
+从 DAG 执行结果中发现用户未明确提出、但可能有研究价值的机会。
+**Phase 1 边界：只检测并落盘 pending；不主动推送、不改 UI、不自动执行 DAG。**
+
+设计稿：`docs/OPPORTUNITY_ENGINE_DESIGN.md`
+
+### 8.2 关键新增模块（`src/paperwise/opportunity/`）
+
+```python
+# models.py
+class ResearchOpportunity:  # type / evidence / confidence / importance / novelty / status
+    def signature(self) -> str: ...   # 去重签名
+class OpportunityType:   # KNOWLEDGE_GAP / MISSING_EVIDENCE / CONTRADICTION / METHOD_COMPLEMENTARITY
+class OpportunityStatus: # PENDING / ACTING / ACTED / DISMISSED / EXPIRED
+class EvidenceRef:       # source_type / source_id / excerpt / location
+
+# rules.py —— 4 条确定性检测规则（不调 LLM，precision 优先）
+DEFAULT_RULES = [KnowledgeGapRule, MissingEvidenceRule, ContradictionRule, MethodComplementarityRule]
+
+# evidence.py
+class EvidenceVerifier:  # 无证据机会直接丢弃；MissingEvidence 可选 KB 反证
+    def verify(self, opportunity) -> bool: ...
+
+# scorer.py
+class OpportunityScorer:  # confidence/importance/novelty 三维打分 + min_confidence 过滤
+    def score(self, candidates, existing=()) -> list[ResearchOpportunity]: ...
+
+# detector.py
+class OpportunityDetector:
+    def detect(self, research_state, reviewer_findings=None, existing=None, depth=0): ...
+class OpportunityPolicy:
+    max_per_run=3; max_depth=1; min_confidence=0.5; allow_proactive_interrupt=False
+```
+
+### 8.3 防递归五约束（detector 强制）
+
+1. **depth limit**：`depth >= max_depth` 直接返回空（机会触发的 DAG 不再级联检测）
+2. **budget**：单次检测 ≤ `max_per_run`（默认 3）
+3. **confidence**：scorer 的 `min_confidence` 过滤低置信机会
+4. **cooldown + dedup**：同签名机会在仍 pending/acting 时不重复（novelty 降权 + 单轮签名去重）
+5. **interrupt policy**：Phase 1 所有机会强制 `status=pending`，绝不主动打断
+
+### 8.4 集成点
+
+- `ResearchState` 扩展 `opportunities` 字段 + `add_opportunity()` /
+  `get_active_opportunities()` / `dismiss_opportunity()`
+- `SmartOrchestrator._run_complex()` 结束后：`OpportunityDetector.detect(depth=0)`
+  → 机会落盘 research_state + 写入 `orchestration_status.json` 的 `opportunities` 键
+- 修复循环 import：rules.py / detector.py 对 ResearchState 改用 TYPE_CHECKING
+
+### 8.5 测试
+
+新增 `tests/test_opportunity/test_detector.py`：15 个测试，对应 4 条验收标准：
+① 4 类机会都能检测 ② 无证据机会被丢弃 ③ 空输入/无锚点输入不产垃圾
+④ depth/budget/dedup/pending-only 防递归约束生效。全量回归 205 通过。
+
+---
+
+## 9. 后续方向
 
 > 2026-08-30 路线调整：L3 骨架已成型，下一阶段不再堆基础能力，
 > 优先把 P3 的经验学习做成**可验证的闭环**（P3.5 ✅ 已完成机制），再进入 P4。
 
-### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐
+### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐  🚧 Phase 1 已完成
 
-> **架构设计与 Gap Analysis 已落盘：见 [`docs/OPPORTUNITY_ENGINE_DESIGN.md`](./OPPORTUNITY_ENGINE_DESIGN.md)（编码前边界定义，含 10 问 Gap 分析与防递归五约束）。**
+> **架构设计与 Gap Analysis：`docs/OPPORTUNITY_ENGINE_DESIGN.md`**
+> **Phase 1（检测+落盘 pending）已实现，见第 8 节。**
 
 `ProactiveEngine` 从"论文推荐器"升级为"研究机会探测器"——
 **在执行中发现机会，而非定时推送**：
@@ -451,8 +515,8 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 - 触发源：DAG 执行 Trace + ResearchState findings + reviewer findings.json
 - 防递归：Opportunity Budget / Depth Limit / Confidence Threshold /
   Cooldown+Dedup / User Interrupt Policy
-- 三阶段落地：Phase 1 检测（机会落盘 pending）→ Phase 2 Action Planner
-  （机会进 Dynamic DAG）→ Phase 3 Proactive 升级（pending 机会按需 surfaced）
+- 三阶段落地：Phase 1 检测 ✅ → Phase 2 Action Planner（机会进 Dynamic DAG）⬜
+  → Phase 3 Proactive 升级（pending 机会按需 surfaced）⬜
 
 ### P4.5：Retrieval-native Paper Agent（与 P4 并行）⭐⭐⭐⭐⭐
 
@@ -476,7 +540,7 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 
 ---
 
-## 9. 验收标准
+## 10. 验收标准
 
 | 迭代 | 必须通过的测试 | 关键验证点 |
 |------|----------------|-----------|
@@ -486,17 +550,18 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 | P3 | `pytest tests/test_learning/ -v` | learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入。**状态：架构完成，学习效果待验证** |
 | P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略。**状态：机制完成，真实增益证据待积累** |
 | P2 收尾 | `pytest tests/test_orchestration/test_executable_plan.py -v` | 8/8 通过；动态 Plan 折叠后只含可执行节点；动态失败回退静态 |
+| P4 Phase 1 | `pytest tests/test_opportunity/ -v` | 15/15 通过；4 类机会可检测、无证据机会被丢弃、空输入不产垃圾、防递归五约束生效 |
 
 ---
 
-## 10. 已知问题
+## 11. 已知问题
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
 
 ---
 
-## 11. Git 工作流
+## 12. Git 工作流
 
 每个迭代：
 1. 代码改动 + 测试

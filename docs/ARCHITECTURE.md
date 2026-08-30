@@ -276,6 +276,20 @@ StrategyEvaluator:        A/B 验证策略收益（baseline vs treatment → act
                                           → record_strategy_outcomes 回写验证计数
 ```
 
+### 3.11 研究机会探测 (`opportunity/，P4 Phase 1)
+
+```
+OpportunityDetector:  rules → evidence → scorer → policy（防递归五约束）
+  ├─ rules.py     4 类确定性规则：KnowledgeGap / MissingEvidence /
+  │               Contradiction / MethodComplementarity（不调 LLM）
+  ├─ evidence.py  EvidenceVerifier：无证据的机会直接丢弃
+  ├─ scorer.py    confidence / importance / novelty 三维打分 + 阈值过滤
+  └─ detector.py  OpportunityPolicy：budget / depth / confidence / dedup / 不打扰
+
+Phase 1 边界：机会只落盘为 pending（ResearchState.opportunities），
+不主动推送、不改 UI、不自动执行 DAG。
+```
+
 ---
 
 ## 4. 数据流图

@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from paperwise.memory.storage import create_storage
+from paperwise.opportunity.models import (
+    OpportunityStatus,
+    ResearchOpportunity,
+)
 
 
 @dataclass
@@ -49,19 +53,24 @@ class ResearchState:
     completed_nodes: list[str] = field(default_factory=list)
     failed_nodes: list[str] = field(default_factory=list)
     confidence: float = 0.0
+    opportunities: list[ResearchOpportunity] = field(default_factory=list)
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["opportunities"] = [o.to_dict() for o in self.opportunities]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "ResearchState":
         # Rehydrate dataclass fields for findings/gaps
         findings = [Finding(**f) for f in data.get("findings", [])]
         gaps = [KnowledgeGap(**g) for g in data.get("gaps", [])]
+        opportunities = [ResearchOpportunity.from_dict(o) for o in data.get("opportunities", [])]
         kwargs = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         kwargs["findings"] = findings
         kwargs["gaps"] = gaps
+        kwargs["opportunities"] = opportunities
         return cls(**kwargs)
 
     def mark_updated(self) -> None:
@@ -93,6 +102,30 @@ class ResearchState:
         if len(self.gaps) < before:
             self.mark_updated()
             return True
+        return False
+
+    def add_opportunity(self, opportunity: ResearchOpportunity) -> ResearchOpportunity:
+        """落盘一个机会（Phase 1：status 恒为 pending）。"""
+        opportunity.user_id = self.user_id
+        opportunity.session_id = self.session_id
+        self.opportunities.append(opportunity)
+        self.mark_updated()
+        return opportunity
+
+    def get_active_opportunities(self) -> list[ResearchOpportunity]:
+        """返回仍活跃（pending/acting）的机会。"""
+        return [
+            o for o in self.opportunities
+            if o.status in (OpportunityStatus.PENDING, OpportunityStatus.ACTING)
+        ]
+
+    def dismiss_opportunity(self, opportunity_id: str) -> bool:
+        """标记机会为 dismissed。"""
+        for o in self.opportunities:
+            if o.opportunity_id == opportunity_id:
+                o.status = OpportunityStatus.DISMISSED
+                self.mark_updated()
+                return True
         return False
 
 

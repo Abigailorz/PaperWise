@@ -199,12 +199,13 @@ src/paperwise/opportunity/
 
 ## 5. 三阶段落地
 
-### Phase 1：Opportunity Detection（本迭代编码范围）
-- `opportunity/models.py` + `rules.py` + `evidence.py` + `scorer.py`
+### Phase 1：Opportunity Detection ✅（已实现）
+- `opportunity/models.py` + `rules.py` + `evidence.py` + `scorer.py` + `detector.py`
 - 4 种类型 + 五件防递归约束
 - ResearchState 扩展 opportunities 字段
 - 检测输入：findings + reviewer findings.json（暂不做 Trace payload 增强）
 - **不做** Action 执行、不改推荐 UI；机会只落盘为 pending
+- 验收：15 个测试通过（4 类可检测 / 无证据丢弃 / 不产垃圾 / 防递归生效）
 
 ### Phase 2：Action Planner
 - Opportunity → suggested_actions → Dynamic DAG（复用 to_executable_plan）

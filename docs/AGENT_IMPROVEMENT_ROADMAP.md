@@ -439,5 +439,6 @@
  | 2026-08-30 | 路线调整 | 📌 新方向 | 定位更新为"L3 骨架已成、向 L4 过渡"；插入 **P3.5 Learning Validation**（最高优先）；P4 重定位为 Research Opportunity Engine；新增 P4.5 Retrieval-native Paper Agent；详见实施 Spec 第 1、6 节 |
  | 2026-08-30 | P3.5 Learning Validation | ✅ 机制完成 / 🔶 证据待积累 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
  | 2026-08-30 | P4 架构设计 | 📐 设计稿落盘 | 编码前完成边界定义与 10 问 Gap Analysis；锁死 4 种机会类型 + 防递归五约束；详见 `docs/OPPORTUNITY_ENGINE_DESIGN.md` |
+ | 2026-08-30 | P4 Phase 1 机会检测 | 🚧 Phase 1 完成 | opportunity/ 包：4 类确定性规则 + 证据验证 + 三维打分 + 防递归五约束；机会只落 pending（不推送/不执行）；15 测试通过 |
 
  > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。

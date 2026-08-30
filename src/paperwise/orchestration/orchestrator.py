@@ -27,6 +27,7 @@ from paperwise.orchestration.dynamic_planner import (
 from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
+from paperwise.opportunity.detector import OpportunityDetector
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -65,6 +66,7 @@ class SmartOrchestrator:
       self.dynamic_planner = DynamicDAGPlanner()
       self.plan_policy = PlanCompositionPolicy(use_dynamic_plan=use_dynamic_plan)
       self.proactive_engine = ProactiveEngine(self.workspace, user_id="default")
+      self.opportunity_detector = OpportunityDetector()
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
       self._current_context_xml: str = ""
@@ -326,6 +328,23 @@ class SmartOrchestrator:
       # P3.5: outcome 回写到实际应用过的策略，形成验证闭环
       self.memory_adapter.record_strategy_outcomes(success)
 
+      # P4 Phase 1: 从本次执行检测研究机会，落盘为 pending（不推送、不执行）
+      try:
+          raw_findings = self._load_raw_findings(paper_dir)
+          opportunities = self.opportunity_detector.detect(
+              research_state,
+              reviewer_findings=raw_findings,
+              depth=0,
+          )
+          for opp in opportunities:
+              research_state.add_opportunity(opp)
+          if opportunities:
+              self.research_state_manager.save(research_state)
+              self._write_status(paper_dir, "opportunities", [o.to_dict() for o in opportunities])
+      except Exception:
+          # 机会检测不应阻塞主流程
+          pass
+
       return result
 
   def _build_complex_plan(self, task: str) -> Plan:
@@ -447,6 +466,19 @@ class SmartOrchestrator:
       if findings_path.exists():
           return parse_findings(findings_path)
       return {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
+
+  def _load_raw_findings(self, paper_dir: Path) -> Optional[dict]:
+      """读取 reviewer 的原始 findings.json（含 flagged_claims/missing_aspects）。
+
+      parse_findings 只保留计数；机会检测需要完整的 flagged_claims 结构。
+      """
+      raw_path = paper_dir / "review" / "findings.json"
+      if not raw_path.exists():
+          return None
+      try:
+          return json.loads(raw_path.read_text(encoding="utf-8"))
+      except Exception:
+          return None
 
   async def _handle_read_paper(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
