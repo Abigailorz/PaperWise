@@ -1,7 +1,7 @@
-# PaperWise 技术审计报告 v0.4.1
+# PaperWise 技术审计报告 v0.5.0
 
 > 审计时间：2026-08-12
-> 审计范围：PaperWise v0.4.1（`src/paperwise/` 50 个 Python 文件，~7,300 行）
+> 审计范围：PaperWise v0.5.0（`src/paperwise/` 67 个 Python 文件，~10,800 行）
 > 审计方法：代码逐层核查 + `pytest tests/` 全量运行（18/18 通过）+ 文档一致性核对
 
 ---

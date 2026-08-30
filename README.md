@@ -1,4 +1,4 @@
-# PaperWise — AI 学术论文智能解读系统 v0.4.1
+# PaperWise — AI 学术论文智能解读系统 v0.5.0
 
 基于《深入理解 AI Agent：设计原理与工程实践》全书知识体系构建。
 
@@ -47,6 +47,7 @@ python tests/run_agent_tests.py                # Agent 能力测试
 9. **主动提醒** — 定时器到期自动注入 Agent 上下文并广播
 10. **评估 Dashboard** — 打开 `http://localhost:8000/dashboard` 查看 Pass@k 趋势
 11. **主动论文推荐** — 从记忆自动学习兴趣画像（无需手动填研究方向），据此检索 arXiv 新论文，横幅一键"解读这篇"；每日定时推送
+12. **Research Graph** — Evidence / Claim / Method / Opportunity 实体化，跨任务持久累积研究状态
 
 ## CLI 命令
 

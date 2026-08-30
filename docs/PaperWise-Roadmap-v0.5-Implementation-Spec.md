@@ -29,9 +29,9 @@ L4+ Proactive Research Agent     🚧 P4 Research Opportunity Engine
   │  Phase 2 Action Planner         ⬜（机会进 Dynamic DAG）
   │  Phase 3 Proactive 升级         ⬜（pending 按需 surfaced）
   ▼
-P4.5 Retrieval-native Agent      ⬜ Chunking / Hybrid Retrieval / Evidence Pack / Citation Grounding
+P4.5 Retrieval-native Agent      ✅ Chunking / Hybrid Retrieval / Evidence Pack / Citation Grounding
   ▼
-L5 Research-native Agent         ⬜ P5 Research Graph
+L5 Research-native Agent         🚧 P5 Research Graph
 Research Agent
 ```
 
@@ -44,7 +44,7 @@ Research Agent
 | L2 Workflow Agent | 90%+ | DAG + Multi-Agent + Review + Replan 完整 |
 | L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Dynamic DAG 成为主路径；Experience Learning 架构完成 |
 | L4 Self-improving Agent | 15~25% | P3 打开入口；P3.5 验证机制已落地，**真实论文上的增益证据待积累（效果验证 Pending）** |
-| L5 Research-native Agent | <10% | Research Graph 未启动 |
+| L5 Research-native Agent | 45% | Evidence-linked Research Graph 已接入 DAG/API |
 
 ### 1.1 P0→P3 已形成的闭环
 
@@ -549,20 +549,21 @@ reviewer 子 Agent 真实产出 `review/findings.json` + `findings.md`
 - 三阶段落地：Phase 1 检测 ✅ → Phase 2 Action Planner（机会进 Dynamic DAG）✅
   → Phase 3 Proactive 升级（pending 机会按需 surfaced）✅（均只本地提交，未推送）
 
-### P4.5：Retrieval-native Paper Agent（与 P4 并行）⭐⭐⭐⭐⭐
+### P4.5：Retrieval-native Paper Agent ✅（2026-08-31）
 
-解决当前最大技术债——"全文进上下文"：
+实现见 `docs/P4.5-EVIDENCE-RETRIEVAL-SPEC.md`。DAG 新增 `retrieve_evidence`
+节点；Evidence Pack 保留 section/line/figure/table/equation citation，并可在
+current paper 与 cross-paper library 两种 scope 下检索。空召回进入 re-query /
+replan，报告写作改为优先消费 Evidence Pack。
 
-- PDF 解析后按章节/段落 chunk 化，保留 section / 行号 / 图表 metadata
-- Dense + Sparse 混合检索 + Rerank
-- DAG 节点按需取 Evidence，引用强制接地（Citation Grounding）
-- 解决 Context Window / Cost / Attention Dilution / Retrieval Noise 四个问题
+### P5：Research Graph 🚧 第一版（2026-08-31）
 
-### P5：Research Graph ⭐⭐⭐⭐
+实现见 `docs/P5-RESEARCH-GRAPH-SPEC.md`。新增稳定 ID、可合并的
+`ResearchGraph`、`ResearchGraphBuilder` 与 `ResearchGraphStore`；DAG 收尾
+自动合并 Evidence / Finding / Opportunity / Claim / Method / Experiment，
+并输出 per-paper 与 user-level 两个层次的图谱。API 暴露
+`GET /api/research-graph`。
 
-- 实体：User - Project - Question - Paper - Method - Evidence - Experiment - Hypothesis
-- 从 Paper-centric knowledge 升级为 Research-centric knowledge
-- P4 的 Opportunity Detection 成熟后再启动
 
 ### P6：Multi-Agent Collaboration ⭐⭐⭐
 

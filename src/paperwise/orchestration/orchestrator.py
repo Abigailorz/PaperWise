@@ -30,6 +30,7 @@ from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
 from paperwise.opportunity.action_planner import ActionPlanner
 from paperwise.opportunity.surfacer import OpportunitySurfacer
+from paperwise.research_graph import ResearchGraphBuilder, ResearchGraphStore
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -76,6 +77,8 @@ class SmartOrchestrator:
       self.opportunity_detector = OpportunityDetector()
       self.action_planner = ActionPlanner()
       self.opportunity_surfacer = OpportunitySurfacer()
+      self.research_graph_builder = ResearchGraphBuilder()
+      self.research_graph_store = ResearchGraphStore(self.workspace, user_id="default")
       self.enable_opportunity_actions = enable_opportunity_actions
       self.opportunity_act_threshold = opportunity_act_threshold
       self.max_review_rounds = max_review_rounds
@@ -363,6 +366,20 @@ class SmartOrchestrator:
           if opportunities:
               self.research_state_manager.save(research_state)
               self._write_status(paper_dir, "opportunities", [o.to_dict() for o in opportunities])
+          # P5: 将 Evidence / Finding / Opportunity 合并为可持久化 Research Graph。
+          evidence_path = paper_dir / "evidence" / "evidence_pack.json"
+          evidence_packs = [EvidencePack.load(evidence_path)] if evidence_path.exists() else []
+          facts = {}
+          facts_path = paper_dir / "facts.json"
+          if facts_path.exists():
+              try:
+                  facts = json.loads(facts_path.read_text(encoding="utf-8"))
+              except Exception:
+                  facts = {}
+          graph = self.research_graph_builder.build(research_state, evidence_packs, facts)
+          self.research_graph_store.merge(graph)
+          graph.save(paper_dir / "research_graph.json")
+          self._write_status(paper_dir, "research_graph", graph.stats())
       except Exception:
           # 机会检测不应阻塞主流程
           pass

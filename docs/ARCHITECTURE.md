@@ -1,4 +1,4 @@
-# PaperWise 完整架构文档 v0.4.1
+# PaperWise 完整架构文档 v0.5.0
 
 > 基于《深入理解 AI Agent：设计原理与工程实践》（李博杰 著, v1.4）全书知识体系
 > 审计达标：CRITICAL 0 降级 / HIGH 17/20 已修复 / MEDIUM 10/16 已修复 / LOW 2/8 已修复
@@ -19,18 +19,18 @@ PaperWise Agent = Model + Harness + Environment
 
 Model:       DeepSeek / Kimi K3 / OpenAI / 任意 OpenAI 兼容 API
 Harness:     上下文管理(5层压缩) + 工具接口(17工具五类) + 约束/验证/纠正
-Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Web API + WebSocket
+Environment: 文件系统 + 知识库(RAG+RAPTOR+GraphRAG) + Evidence Pack + Research Graph + Web API + WebSocket
 ```
 
 ### 1.2 技术指标
 
 | 指标 | 值 |
 |------|-----|
-| Python 文件 | 56 个 |
-| 代码行数 | ~9,000 行 |
+| Python 文件 | 60 个 |
+| 代码行数 | ~9,600 行 |
 | 工具数量 | 17 个（五类全覆盖） |
 | Agent Skills | 3 个（学术阅读/报告生成/验证） |
-| 单元测试 | 60 个 |
+| 单元测试 | 236 个 |
 | 支持 LLM | DeepSeek / Kimi K3 / OpenAI / 任意兼容 API |
 | CRITICAL 降级 | 0（全部修复） |
 

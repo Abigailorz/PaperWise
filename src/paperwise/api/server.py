@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
         await Scheduler.instance().stop()
 
 
-app = FastAPI(title="PaperWise API", version="0.4.1", lifespan=lifespan)
+app = FastAPI(title="PaperWise API", version="0.5.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # 全局 Session 管理
@@ -83,7 +83,24 @@ def _fire_scheduler_event(sid: str, event: dict) -> None:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.4.1"}
+    return {"status": "ok", "version": "0.5.0"}
+
+
+@app.get("/api/research-graph")
+async def research_graph(paper_dir: Optional[str] = Query(None)):
+    """Return the latest persisted Research Graph for a paper or user."""
+    from paperwise.research_graph import ResearchGraphStore
+
+    from paperwise.config.settings import get_settings
+    workspace = Path(get_settings().workspace_dir)
+    if paper_dir:
+        path = Path(paper_dir) / "research_graph.json"
+        if not path.exists():
+            raise HTTPException(404, "research_graph.json not found for paper_dir")
+        from paperwise.research_graph.models import ResearchGraph
+        return ResearchGraph.load(path).to_dict()
+    graph = ResearchGraphStore(workspace).load()
+    return graph.to_dict()
 
 
 @app.post("/api/sessions")
