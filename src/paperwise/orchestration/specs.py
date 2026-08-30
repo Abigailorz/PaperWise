@@ -102,21 +102,21 @@ CRITICAL: In addition to findings.md, also save a machine-readable
 DO NOT modify the report. Only review and flag.""",
             task_template=f"""Adversarially review the report for the paper at: {paper_dir}
 
-1. Read text.md (the original paper)
-2. Read report/report.md (the generated report)
-3. For EVERY factual claim in the report:
-   a. Search the paper for supporting evidence
-   b. If found, note the evidence
-   c. If NOT found, flag as potential hallucination
-4. Check numerical claims: re-verify all numbers against the paper
-5. Check completeness: are all important aspects covered?
-6. EARLY: after a first pass over report.md, immediately save your current
-   findings to review/findings.json (machine-readable, exact schema above).
-   Then refine and also write review/findings.md. This guarantees a
-   machine-readable artifact even if you run low on steps.
+Work efficiently — do NOT re-read text.md line by line. Instead:
+1. Read facts.json (already extracted, has line citations) and report/report.md.
+2. Pick the 10-15 most important / most suspicious factual claims in the report
+   (numbers, comparisons, method names, conclusions).
+3. Verify each with a targeted `grep` for the key term/number in text.md
+   (one grep per claim, not full reads). Use facts.json citations as anchors.
+4. Flag any claim whose grep finds no supporting evidence (potential hallucination).
+5. Check completeness: did the report miss major sections (method / results / limitations)?
+6. EARLY: after your first verification pass, immediately save current findings
+   to review/findings.json (machine-readable, exact schema above), then refine
+   and also write review/findings.md. Guarantee the JSON exists even if low on steps.
 
-CRITICAL: Be adversarial. If you cannot find evidence for a claim, flag it.
-Do not assume the report is correct. The user depends on your thoroughness.""",
+CRITICAL: Be adversarial but bounded — verify the top claims thoroughly rather
+than exhaustively re-reading the whole paper. If you cannot find evidence for a
+claim, flag it. The user depends on your thoroughness on the IMPORTANT claims.""",
             allowed_tools=["read_file", "grep", "glob", "write_file"],
             output_path="review/findings.md",
             max_steps=40,
