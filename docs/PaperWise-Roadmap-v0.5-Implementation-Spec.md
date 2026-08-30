@@ -8,32 +8,28 @@
 ## 1. 演进主线
 
 ```text
-L1 Tool Agent
-  │
-  │ ReAct + Tools + Guardrails
+L1 Tool Agent                    ✅ ReAct + Tools + Guardrails
   ▼
-L2 Workflow Agent
-  │
-  │ DAG + Multi-Agent + Review + Replan
+L2 Workflow Agent                ✅ Router / DAG / Multi-Agent / Review / Replan
   ▼
-L3 State-aware Agent        ← ★ 核心骨架已形成
-  │
-  │ Memory → Decision
-  │ Research State
-  │ Dynamic DAG
-  │ Experience
+L3 State-aware Agent             🔶 核心骨架已形成
+  │  P0 Trace                    ✅
+  │  P1 Memory → Decision        ✅
+  │  P2 Dynamic DAG              ✅（主路径，静态降级为 safety net）
+  │  P3 Experience Learning      🔶 架构完成，学习效果待验证
   ▼
-L4 Self-improving Agent     ← ★ P3 刚打开入口
-  │
-  │ Reflection
-  │ Failure Attribution
-  │ Strategy Learning
-  │ Policy Learning
+L4 Self-improving Agent          🔶 P3 刚打开入口
+  │  P3.5 Learning Evaluation    🔶 机制完成，真实增益证据待积累
+  │  Strategy Validation         ⬜
+  │  Failure Attribution         ⬜
+  │  Policy Learning             ⬜
   ▼
-L5 Research-native Agent
-  │
-  │ Research Graph / Opportunity / Hypothesis / Evidence
+L4+ Proactive Research Agent     ⬜ P4 Research Opportunity Engine
+  │  （设计稿已落盘，见 OPPORTUNITY_ENGINE_DESIGN.md）
   ▼
+P4.5 Retrieval-native Agent      ⬜ Chunking / Hybrid Retrieval / Evidence Pack / Citation Grounding
+  ▼
+L5 Research-native Agent         ⬜ P5 Research Graph
 Research Agent
 ```
 
@@ -44,8 +40,8 @@ Research Agent
 | 层级 | 成熟度 | 说明 |
 |------|--------|------|
 | L2 Workflow Agent | 90%+ | DAG + Multi-Agent + Review + Replan 完整 |
-| L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Dynamic DAG 成为主路径；Experience Learning 第一版完成 |
-| L4 Self-improving Agent | 15~25% | P3 打开入口；P3.5 验证机制已落地，真实论文上的增益证据待积累 |
+| L3 State-aware Agent | 70~80% | Memory→Decision 已打通；Dynamic DAG 成为主路径；Experience Learning 架构完成 |
+| L4 Self-improving Agent | 15~25% | P3 打开入口；P3.5 验证机制已落地，**真实论文上的增益证据待积累（效果验证 Pending）** |
 | L5 Research-native Agent | <10% | Research Graph 未启动 |
 
 ### 1.1 P0→P3 已形成的闭环
@@ -445,14 +441,18 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 
 ### P4：Research Opportunity Engine ⭐⭐⭐⭐⭐
 
-`ProactiveEngine` 从"论文推荐器"升级为"研究机会探测器"：
+> **架构设计与 Gap Analysis 已落盘：见 [`docs/OPPORTUNITY_ENGINE_DESIGN.md`](./OPPORTUNITY_ENGINE_DESIGN.md)（编码前边界定义，含 10 问 Gap 分析与防递归五约束）。**
 
-- Opportunity 类型：KnowledgeGap / MissingEvidence / Contradiction /
-  MethodComplementarity / NewMethod
-- 触发源：DAG 执行事件 + ResearchState + KnowledgeBase（在执行中发现，
-  而非定时推送）
-- Action 多样化：推荐论文 / 建议实验 / 建议查证 / 建议补充 Related Work /
-  建议新增 Ablation / 建议调整研究方向
+`ProactiveEngine` 从"论文推荐器"升级为"研究机会探测器"——
+**在执行中发现机会，而非定时推送**：
+
+- Opportunity 类型（第一版锁死 4 种）：KnowledgeGap / MissingEvidence /
+  Contradiction / MethodComplementarity
+- 触发源：DAG 执行 Trace + ResearchState findings + reviewer findings.json
+- 防递归：Opportunity Budget / Depth Limit / Confidence Threshold /
+  Cooldown+Dedup / User Interrupt Policy
+- 三阶段落地：Phase 1 检测（机会落盘 pending）→ Phase 2 Action Planner
+  （机会进 Dynamic DAG）→ Phase 3 Proactive 升级（pending 机会按需 surfaced）
 
 ### P4.5：Retrieval-native Paper Agent（与 P4 并行）⭐⭐⭐⭐⭐
 
@@ -483,8 +483,8 @@ def to_executable_plan(plan: Plan) -> Plan: ...
 | P0 | `pytest tests/test_evaluation/ -v` | 31/31 通过；`TraceStore.get_metrics` 指标正确；simple path trace 包含子 Agent 事件 |
 | P1 | `pytest tests/test_orchestration/test_memory_driven.py tests/test_memory/test_context_engine_orchestrator.py -v` | 11/11 通过；ContextPackage 进入子 Agent prompt；gaps 驱动 Plan |
 | P2 | `pytest tests/test_orchestration/test_capability_registry.py tests/test_orchestration/test_dynamic_planner.py -v` | 15/15 通过；DynamicDAGPlanner 生成拓扑合法 Plan |
-| P3 | `pytest tests/test_learning/ -v` | learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入 |
-| P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略 |
+| P3 | `pytest tests/test_learning/ -v` | learn_procedure 真正写入 ProceduralMemory；策略库持久化并可驱动 Plan 插入。**状态：架构完成，学习效果待验证** |
+| P3.5 | `pytest tests/test_learning/test_strategy_evaluator.py -v` | 10/10 通过；A/B gain 正确计算并回写；未验证策略在选择中降权；outcome 只回写实际应用的策略。**状态：机制完成，真实增益证据待积累** |
 | P2 收尾 | `pytest tests/test_orchestration/test_executable_plan.py -v` | 8/8 通过；动态 Plan 折叠后只含可执行节点；动态失败回退静态 |
 
 ---

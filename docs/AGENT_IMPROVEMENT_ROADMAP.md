@@ -435,8 +435,9 @@
  | 2026-08-29 | P1 Memory → Decision | ✅ 完成 | ContextEngine 进入 Orchestrator，gaps 驱动 Plan |
  | 2026-08-29 | P2 动态 DAG Planner | ✅ 完成 | Capability Registry + DynamicDAGPlanner |
  | 2026-08-30 | P2 收尾：动态主路径 | ✅ 完成 | Dynamic DAG 默认开启；新增动态→可执行适配层（节点受控、组合动态）；静态 Plan 降级为 safety net |
- | 2026-08-30 | P3 经验学习 | ✅ 完成 | LearningSignal / FailurePattern / StrategyLibrary；修复 learn_procedure 与 _run_pptx_writer 两个存量 bug |
+ | 2026-08-30 | P3 经验学习 | ✅ 架构完成 / 🔶 效果待验证 | LearningSignal / FailurePattern / StrategyLibrary；修复 learn_procedure 与 _run_pptx_writer 两个存量 bug；**策略是否真正提升性能待真实任务验证** |
  | 2026-08-30 | 路线调整 | 📌 新方向 | 定位更新为"L3 骨架已成、向 L4 过渡"；插入 **P3.5 Learning Validation**（最高优先）；P4 重定位为 Research Opportunity Engine；新增 P4.5 Retrieval-native Paper Agent；详见实施 Spec 第 1、6 节 |
- | 2026-08-30 | P3.5 Learning Validation | ✅ 完成 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
+ | 2026-08-30 | P3.5 Learning Validation | ✅ 机制完成 / 🔶 证据待积累 | Strategy 验证字段（confidence/gain）+ StrategyEvaluator A/B 评测 + outcome 回写闭环；策略选择按验证置信度降权未验证项 |
+ | 2026-08-30 | P4 架构设计 | 📐 设计稿落盘 | 编码前完成边界定义与 10 问 Gap Analysis；锁死 4 种机会类型 + 防递归五约束；详见 `docs/OPPORTUNITY_ENGINE_DESIGN.md` |
 
  > 详细接口与验收标准见 `docs/PaperWise-Roadmap-v0.5-Implementation-Spec.md`。
