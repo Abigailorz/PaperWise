@@ -34,6 +34,9 @@ from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
 from paperwise.harness.harness import Harness
+from paperwise.evidence import EvidenceRetriever
+from paperwise.evidence.models import EvidencePack
+from paperwise.memory.knowledge_base import KnowledgeBase
 
 
 class SmartOrchestrator:
@@ -78,6 +81,9 @@ class SmartOrchestrator:
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
       self._current_context_xml: str = ""
+      self.evidence_retriever = EvidenceRetriever(
+          KnowledgeBase(self.workspace / ".paperwise" / "default" / "evidence_kb")
+      )
 
   async def run(self, task: str, paper_dir: Optional[Path] = None) -> AgentResult:
       """Run a task through the appropriate execution path.
@@ -344,10 +350,13 @@ class SmartOrchestrator:
       # P4 Phase 1: 从本次执行检测研究机会，落盘为 pending（不推送、不执行）
       try:
           raw_findings = self._load_raw_findings(paper_dir)
+          evidence_path = paper_dir / "evidence" / "evidence_pack.json"
+          evidence_packs = [EvidencePack.load(evidence_path)] if evidence_path.exists() else []
           opportunities = self.opportunity_detector.detect(
               research_state,
               reviewer_findings=raw_findings,
               depth=0,
+              evidence_packs=evidence_packs,
           )
           for opp in opportunities:
               research_state.add_opportunity(opp)
@@ -371,9 +380,15 @@ class SmartOrchestrator:
       plan = Plan()
       plan.add("Read paper and extract facts", task_id="read_paper")
       plan.add(
+          "Retrieve section-level evidence for the task",
+          task_id="retrieve_evidence",
+          depends_on=["read_paper"],
+          parallel_group="retrieval",
+      )
+      plan.add(
           "Analyze methodology and main claims",
           task_id="analyze_method",
-          depends_on=["read_paper"],
+          depends_on=["retrieve_evidence"],
           parallel_group="analysis",
       )
       plan.add(
@@ -405,6 +420,7 @@ class SmartOrchestrator:
       """可执行节点 -> handler 的映射（动态/静态 Plan 共用的受控节点集合）。"""
       return {
           "read_paper": self._handle_read_paper,
+          "retrieve_evidence": self._handle_retrieve_evidence,
           "verify_data": self._handle_verify_data,
           "analyze_method": self._handle_analyze_method,
           "generate_report": self._handle_generate_report,
@@ -603,7 +619,30 @@ class SmartOrchestrator:
       facts_path = paper_dir / "facts.json"
       if not facts_path.exists():
           raise RuntimeError("facts.json missing: read_paper must succeed first")
+      evidence_path = paper_dir / "evidence" / "evidence_pack.json"
+      if evidence_path.exists():
+          state.set_artifact("evidence_pack_path", evidence_path)
       return facts_path
+
+  async def _handle_retrieve_evidence(self, node: NodeSpec, task, state: GraphState):
+      paper_dir = Path(state.get_artifact("paper_dir"))
+      query = state.get_artifact("task_text") or task
+      pack = self.evidence_retriever.retrieve(query, paper_dir=paper_dir, scope="current_paper")
+      if pack.is_empty:
+          raise RuntimeError("evidence retrieval failed after re-query")
+      evidence_path = paper_dir / "evidence" / "evidence_pack.json"
+      pack.save(evidence_path)
+      state.set_artifact("evidence_pack_path", evidence_path)
+      self.trace_collector.add_event(
+          TraceEventType.EVIDENCE_PACK,
+          data={
+              "query": query,
+              "snippets": len(pack.snippets),
+              "low_recall": pack.low_recall,
+              "scope": pack.scope,
+          },
+      )
+      return evidence_path
 
   async def _handle_generate_report(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
@@ -687,8 +726,9 @@ class SmartOrchestrator:
               f"Write a comprehensive analysis report for the task: {task}\n\n"
               f"Based on the paper at {paper_dir}.\n\n"
               "1. Read facts.json and verified.json (if they exist).\n"
-              "2. Write report/sections/*.md and assemble report/report.md.\n"
-              "3. Cite sources as [source: text.md Lxxx-Lyyy]."
+              "2. Read evidence/evidence_pack.json when present and answer only from those snippets plus facts.\n"
+              "3. Write report/sections/*.md and assemble report/report.md.\n"
+              "4. Cite every factual claim using the exact snippet citations."
           ),
           output_path="report/report.md",
           max_steps=35,

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from paperwise.opportunity.evidence import EvidenceVerifier
+from paperwise.opportunity.evidence_bridge import EvidenceOpportunityBridge
 from paperwise.opportunity.models import (
     OpportunityStatus,
     ResearchOpportunity,
@@ -48,11 +49,13 @@ class OpportunityDetector:
         rules: Optional[list[DetectionRule]] = None,
         verifier: Optional[EvidenceVerifier] = None,
         scorer: Optional[OpportunityScorer] = None,
+        evidence_bridge: Optional[EvidenceOpportunityBridge] = None,
     ):
         self.policy = policy or OpportunityPolicy()
         self.rules = rules if rules is not None else list(DEFAULT_RULES)
         self.verifier = verifier or EvidenceVerifier()
         self.scorer = scorer or OpportunityScorer(min_confidence=self.policy.min_confidence)
+        self.evidence_bridge = evidence_bridge or EvidenceOpportunityBridge()
 
     def detect(
         self,
@@ -60,6 +63,7 @@ class OpportunityDetector:
         reviewer_findings: Optional[dict[str, Any]] = None,
         existing: Optional[Iterable[ResearchOpportunity]] = None,
         depth: int = 0,
+        evidence_packs: Optional[Iterable[Any]] = None,
     ) -> list[ResearchOpportunity]:
         """运行检测，返回落盘为 pending 的机会列表。
 
@@ -88,6 +92,13 @@ class OpportunityDetector:
                 candidates.extend(rule.apply(research_state, reviewer_findings))
             except Exception:
                 continue  # 单条规则失败不阻塞其他规则
+
+        # P4: Evidence Pack 不是检索结果缓存，而是机会推理的直接输入。
+        try:
+            candidates.extend(self.evidence_bridge.derive(evidence_packs or []))
+            candidates = self.evidence_bridge.attach(candidates, evidence_packs or [])
+        except Exception:
+            pass
 
         # 2. 证据验证（反幻觉）
         verified = [c for c in candidates if self.verifier.verify(c)]

@@ -173,6 +173,8 @@ class TraceEventType(str, Enum):
     LLM_END = "llm_end"
     TOOL_START = "tool_start"
     TOOL_END = "tool_end"
+    RETRIEVAL = "retrieval"
+    EVIDENCE_PACK = "evidence_pack"
     RETRY = "retry"
     REPLAN = "replan"
     NODE_START = "node_start"
