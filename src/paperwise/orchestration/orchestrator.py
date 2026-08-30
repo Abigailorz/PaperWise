@@ -609,13 +609,31 @@ class SmartOrchestrator:
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_report_writer(state.get_artifact("task_text"), paper_dir)
       report_path = paper_dir / "report" / "report.md"
-      if not result.success or not report_path.exists():
+      if not report_path.exists():
+          # 确定性兜底：writer 可能写完了所有 sections 却没拼 report.md。
+          # 拼接是纯机械操作，不需要 LLM，直接做掉。
+          self._assemble_report_from_sections(paper_dir)
+      if not result.success and not report_path.exists():
           raise RuntimeError(result.error_message or "report writer failed")
+      if not report_path.exists():
+          raise RuntimeError("report.md missing and no sections to assemble")
       am = ArtifactManager(paper_dir)
       report_artifact = am.from_report(report_path)
       am.save("report", report_artifact)
       state.set_artifact("report_artifact", report_artifact)
       return report_path
+
+  @staticmethod
+  def _assemble_report_from_sections(paper_dir: Path) -> None:
+      """把 report/sections/*.md 按文件名顺序拼成 report/report.md。"""
+      sections_dir = paper_dir / "report" / "sections"
+      if not sections_dir.is_dir():
+          return
+      parts = sorted(sections_dir.glob("*.md"))
+      if not parts:
+          return
+      body = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in parts)
+      (paper_dir / "report" / "report.md").write_text(body + "\n", encoding="utf-8")
 
   async def _handle_generate_pptx(self, node: NodeSpec, task, state: GraphState):
       paper_dir = Path(state.get_artifact("paper_dir"))
@@ -643,8 +661,13 @@ class SmartOrchestrator:
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_revision_writer(state.get_artifact("task_text"), paper_dir)
       report_path = paper_dir / "report" / "report.md"
-      if not result.success or not report_path.exists():
+      if not report_path.exists():
+          # 同 generate：revision 改了 sections 但没重拼 report.md 时兜底。
+          self._assemble_report_from_sections(paper_dir)
+      if not result.success and not report_path.exists():
           raise RuntimeError(result.error_message or "revision failed")
+      if not report_path.exists():
+          raise RuntimeError("report.md missing and no sections to assemble")
       am = ArtifactManager(paper_dir)
       report_artifact = am.from_report(report_path)
       am.save("report", report_artifact)
