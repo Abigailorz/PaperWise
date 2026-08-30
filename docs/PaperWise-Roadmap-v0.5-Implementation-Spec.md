@@ -526,6 +526,38 @@ reviewer 子 Agent 真实产出 `review/findings.json` + `findings.md`
 结论：**P4 机会检测引擎在真实 LLM 链路上质量达标**——precision 优先、
 证据支撑、防垃圾、防递归全部生效；子 Agent 失败上抛 + 确定性兜底后 DAG 收敛。
 
+### 8.7 P4.5/P4/P5 LangSplat 全链路评测（2026-08-31）
+
+本轮是 P4.5 + P4 + P5 全部升级完成后的统一真实评测，模型为
+OpenCode Go `glm-5.3-flash`。为控制成本，未按单个大版本重复跑全量回归；
+所有升级完成后先执行一次全量测试，再执行一次 LangSplat 真实链路评测。
+
+**全量回归：233/233 通过**（继续排除 `tests/test_integration/`
+中已知的 mock-LLM + orchestration 漂移用例）。
+
+**P5 Evidence + Graph 专项：PASS。**
+
+- `EvidenceRetriever.index_paper` 索引 318 个 chunk：64 section、152 figure
+- Evidence Pack 返回 8 条 section 级证据；低召回路径正确标记 `low_recall`
+- OpportunityDetector 基于 Evidence Pack 检出 3 条机会：
+  2 条 `knowledge_gap`、1 条 `missing_evidence`
+- 3 条机会全部 `pending`、全部带 evidence、无证据机会为 0
+- `ResearchGraphBuilder` 生成 19 节点 / 18 边，节点包含
+  User / Project / ResearchQuestion / Paper / Method / Dataset /
+  Evidence / Opportunity
+
+**LangSplat 全 DAG：PASS。**
+
+- `eval_langsplat.py` 真实任务最终 `success=true`，DAG 13 步收敛
+- 动态链路实际经历 read / re-read / dynamic research / analyze /
+  generate / revision / review，并在审查后形成闭环
+- 检出 3 条机会：2 条 `knowledge_gap`、1 条 `missing_evidence`
+- 3 条机会全部带 evidence、全部 `pending`、无证据机会为 0、总数不超预算
+
+结论：P4.5 的取证链路、P4 的证据驱动机会检测、P5 的可合并研究图谱已在
+同一真实论文链路上贯通；Evidence Pack、Research State、Opportunity 与
+Research Graph 的持久化状态一致。
+
 ---
 
 ## 9. 后续方向
@@ -556,7 +588,7 @@ reviewer 子 Agent 真实产出 `review/findings.json` + `findings.md`
 current paper 与 cross-paper library 两种 scope 下检索。空召回进入 re-query /
 replan，报告写作改为优先消费 Evidence Pack。
 
-### P5：Research Graph 🚧 第一版（2026-08-31）
+### P5：Research Graph ✅（2026-08-31）
 
 实现见 `docs/P5-RESEARCH-GRAPH-SPEC.md`。新增稳定 ID、可合并的
 `ResearchGraph`、`ResearchGraphBuilder` 与 `ResearchGraphStore`；DAG 收尾
@@ -585,6 +617,7 @@ replan，报告写作改为优先消费 Evidence Pack。
 | P4 Phase 1 | `pytest tests/test_opportunity/ -v` | 15/15 通过；4 类机会可检测、无证据机会被丢弃、空输入不产垃圾、防递归五约束生效 |
 | P4 Phase 2/3 | `pytest tests/test_opportunity/ -v` | 机会 → Dynamic DAG action（read_paper 在前）；相关研究时 surfaced pending 机会 |
 | P4 LangSplat 评测 | `workspace/langsplat/eval_detect_only.py` | ✅ PASS（真实 LLM `deepseek-v4-flash`）：reviewer 产出真实 findings.json，检出 3 条 knowledge_gap 全带证据全 pending；暴露并修复 4 个子 Agent 鲁棒性问题 |
+| P4.5 + P4 + P5 全链路 | `workspace/langsplat/eval_evidence_graph.py` + `workspace/langsplat/eval_langsplat.py` | ✅ PASS（真实 LLM `glm-5.3-flash`）：全量回归 233/233；Evidence → Opportunity → Graph 贯通；3 条机会全带证据且 pending；全 DAG 收敛 |
 
 ---
 
@@ -592,7 +625,7 @@ replan，报告写作改为优先消费 Evidence Pack。
 
 - `tests/test_api/test_sessions.py::test_sessions_list_roundtrip` 需要配置 `DEEPSEEK_API_KEY`。
 - `tests/test_integration/test_e2e_paper.py` 中两个集成测试在 mock LLM + orchestration 路径下行为漂移，需在后续迭代中稳定化。
-- 评测用 LLM 已切换到 OpenCode Go（`https://opencode.ai/zen/go/v1`，`deepseek-v4-flash`，
+- 评测用 LLM 已切换到 OpenCode Go（`https://opencode.ai/zen/go/v1`，`glm-5.3-flash`，
   `PAPERWISE_LLM_PROVIDER=openai_compatible`）。原 DeepSeek key 欠费（402）；
   OpenCode Zen 按量端点（`/zen/v1`）也欠费，Go 订阅端点（`/zen/go/v1`）可用。
 - 子 Agent 失败掩盖问题（analyze_method / review_report / report 拼接 / reviewer 效率）
