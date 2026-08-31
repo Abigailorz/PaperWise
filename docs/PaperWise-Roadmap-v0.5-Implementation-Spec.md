@@ -605,6 +605,27 @@ Action Type，LOW/MEDIUM/HIGH 风险分级）、`ActionPlanner.plan_actions()`
 `StateUpdater`（8 种事件驱动 ResearchState 变更）与
 `ResearchGraphQuery`（Graph 反向查询层）。新增 25 个测试全部通过。
 
+### P6 Phase B–F：Graph-Driven / Strategy Lifecycle / Hypothesis Engine ✅（2026-08-31）
+
+**Phase B（Graph 驱动 Planner）**：`SmartOrchestrator._run_complex()` 在规划前
+通过 `ResearchGraphQuery.find_research_gaps()` 查询持久图谱，将 gap 转为
+`ResearchOpportunity` 注入新 ResearchState，实现 Graph → State → Planner 反向闭环。
+
+**Phase C（Claim-level Grounding）**：报告 writer system prompt 升级为
+Claim → Supporting Evidence → Source Citation 结构；`CITED_BY` 关系加入
+`RelationType` 枚举。
+
+**Phase E（Strategy Lifecycle）**：`StrategyLifecycle` 五级状态
+（candidate → experimental → validated → trusted → deprecated）；
+`promote_strategy()` 需正 actual_gain 才晋升，`demote_strategy()` 在回归时降级；
+`select()` 排除 deprecated 策略。
+
+**Phase F（Hypothesis Engine）**：`HypothesisEngine.generate()` 将
+MethodComplementarity 机会转为 `Hypothesis` + `ExperimentDesign`；
+DAG 收尾自动生成假设并写入 `research_state.hypotheses`。
+
+新增 11 个测试全部通过；全量回归 264/269（5 个为环境文件锁问题）。
+
 
 ### P6：Multi-Agent Collaboration ⭐⭐⭐
 
