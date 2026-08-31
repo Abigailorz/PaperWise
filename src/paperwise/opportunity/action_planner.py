@@ -13,14 +13,23 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from paperwise.core.plan import Plan
+from paperwise.opportunity.action import (
+    ACTION_RISK_LEVELS,
+    ActionRisk,
+    ActionStatus,
+    ActionType,
+    ResearchAction,
+)
 from paperwise.opportunity.models import (
     OpportunityStatus,
+    OpportunityType,
     ResearchOpportunity,
 )
 
 
 #: suggested_action -> 可执行节点（受控映射，见 OPPORTUNITY_ENGINE_DESIGN.md）
 ACTION_TO_NODE: dict[str, str] = {
+    "retrieve_evidence": "expand_evidence",
     "verify_claim": "verify_data",
     "expand_evidence": "expand_evidence",
     "search_papers": "dynamic_research",
@@ -32,6 +41,28 @@ ACTION_TO_NODE: dict[str, str] = {
 
 #: 未知 action 的保守归宿
 DEFAULT_ACTION_NODE = "dynamic_research"
+
+
+#: OpportunityType -> (primary Action, secondary Action or None)
+#: Deterministic mapping; LLM cannot change this policy.
+OPPORTUNITY_TO_ACTIONS: dict[OpportunityType, tuple[ActionType, ...]] = {
+    OpportunityType.KNOWLEDGE_GAP: (
+        ActionType.RETRIEVE_EVIDENCE,
+        ActionType.ANALYZE_GAP,
+    ),
+    OpportunityType.MISSING_EVIDENCE: (
+        ActionType.RETRIEVE_EVIDENCE,
+        ActionType.VERIFY_CLAIM,
+    ),
+    OpportunityType.CONTRADICTION: (
+        ActionType.RETRIEVE_EVIDENCE,
+        ActionType.VERIFY_CLAIM,
+    ),
+    OpportunityType.METHOD_COMPLEMENTARITY: (
+        ActionType.SEARCH_RELATED_WORK,
+        ActionType.COMPARE_METHODS,
+    ),
+}
 
 
 @dataclass
@@ -46,7 +77,93 @@ class ActionResult:
 
 
 class ActionPlanner:
-    """把机会转化为可执行的 Dynamic DAG。"""
+    """Map opportunities to formal ResearchActions, then to executable DAG."""
+
+    def plan_actions(
+        self,
+        opportunities: list[ResearchOpportunity],
+        research_state: Any,
+        max_actions: int = 3,
+    ) -> list[ResearchAction]:
+        """Convert pending opportunities into bounded ResearchActions.
+
+        Deterministic: same input -> same output. Action Budget is enforced
+        (max_actions per round). LLM parameterizes objective text but never
+        changes the action type or bypasses constraints.
+        """
+        actions: list[ResearchAction] = []
+        for opp in opportunities:
+            if opp.status != OpportunityStatus.PENDING:
+                continue
+            action_types = OPPORTUNITY_TO_ACTIONS.get(opp.type, (ActionType.RETRIEVE_EVIDENCE,))
+            for action_type in action_types:
+                if len(actions) >= max_actions:
+                    return actions
+                action = ResearchAction(
+                    opportunity_id=opp.opportunity_id,
+                    action_type=action_type,
+                    objective=f"[{opp.type.value}] {opp.title}: {opp.description[:120]}",
+                    required_capabilities=self._capabilities_for(action_type),
+                    input_refs=[f"opportunity:{opp.opportunity_id}"],
+                    expected_outputs=self._outputs_for(action_type),
+                    priority=opp.confidence * opp.importance,
+                    confidence=opp.confidence,
+                    risk_level=ACTION_RISK_LEVELS.get(action_type, ActionRisk.LOW),
+                    status=ActionStatus.PENDING,
+                    requires_user_approval=(
+                        ACTION_RISK_LEVELS.get(action_type, ActionRisk.LOW) != ActionRisk.LOW
+                    ),
+                )
+                actions.append(action)
+        return actions
+
+    def actions_to_dag(self, actions: list[ResearchAction]) -> Plan:
+        """Convert approved/auto-executable actions into a controlled Plan."""
+        plan = Plan()
+        plan.add("Read paper and extract facts", task_id="read_paper")
+        seen_nodes: set[str] = set()
+        for action in actions:
+            if not action.is_auto_executable:
+                continue
+            node_id = ACTION_TO_NODE.get(action.action_type.value, DEFAULT_ACTION_NODE)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
+            plan.add(
+                f"[{action.action_type.value}] {action.objective[:60]}",
+                task_id=node_id,
+                depends_on=["read_paper"],
+                max_retries=1,
+            )
+        return plan
+
+    @staticmethod
+    def _capabilities_for(action_type: ActionType) -> list[str]:
+        caps: dict[ActionType, list[str]] = {
+            ActionType.RETRIEVE_EVIDENCE: ["evidence_retriever", "knowledge_base"],
+            ActionType.VERIFY_CLAIM: ["code_interpreter", "grep"],
+            ActionType.COMPARE_METHODS: ["dynamic_research", "evidence_retriever"],
+            ActionType.ANALYZE_GAP: ["analyze_method", "evidence_retriever"],
+            ActionType.SEARCH_RELATED_WORK: ["dynamic_research", "recommender"],
+            ActionType.GENERATE_HYPOTHESIS: ["llm"],
+            ActionType.DESIGN_EXPERIMENT: ["llm"],
+            ActionType.ASK_USER: ["ask_user"],
+        }
+        return caps.get(action_type, ["dynamic_research"])
+
+    @staticmethod
+    def _outputs_for(action_type: ActionType) -> list[str]:
+        outs: dict[ActionType, list[str]] = {
+            ActionType.RETRIEVE_EVIDENCE: ["evidence/evidence_pack.json"],
+            ActionType.VERIFY_CLAIM: ["verified.json"],
+            ActionType.COMPARE_METHODS: ["findings/comparison.json"],
+            ActionType.ANALYZE_GAP: ["findings/gap_analysis.json"],
+            ActionType.SEARCH_RELATED_WORK: ["related_papers.json"],
+            ActionType.GENERATE_HYPOTHESIS: ["hypotheses.json"],
+            ActionType.DESIGN_EXPERIMENT: ["experiment_design.json"],
+            ActionType.ASK_USER: ["user_response"],
+        }
+        return outs.get(action_type, [])
 
     def build_action_plan(self, opportunity: ResearchOpportunity) -> Plan:
         """为机会构建行动 DAG：read_paper -> 各 action 节点。

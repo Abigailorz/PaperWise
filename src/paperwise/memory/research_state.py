@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from paperwise.memory.storage import create_storage
+from paperwise.memory.state_updater import Hypothesis, StateEvent
+from paperwise.opportunity.action import ResearchAction
 from paperwise.opportunity.models import (
     OpportunityStatus,
     ResearchOpportunity,
@@ -54,11 +56,16 @@ class ResearchState:
     failed_nodes: list[str] = field(default_factory=list)
     confidence: float = 0.0
     opportunities: list[ResearchOpportunity] = field(default_factory=list)
+    hypotheses: list[Hypothesis] = field(default_factory=list)
+    pending_actions: list[ResearchAction] = field(default_factory=list)
+    completed_actions: list[ResearchAction] = field(default_factory=list)
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["opportunities"] = [o.to_dict() for o in self.opportunities]
+        data["pending_actions"] = [a.to_dict() for a in self.pending_actions]
+        data["completed_actions"] = [a.to_dict() for a in self.completed_actions]
         return data
 
     @classmethod
@@ -67,10 +74,16 @@ class ResearchState:
         findings = [Finding(**f) for f in data.get("findings", [])]
         gaps = [KnowledgeGap(**g) for g in data.get("gaps", [])]
         opportunities = [ResearchOpportunity.from_dict(o) for o in data.get("opportunities", [])]
+        hypotheses = [Hypothesis(**h) for h in data.get("hypotheses", [])]
+        pending_actions = [ResearchAction.from_dict(a) for a in data.get("pending_actions", [])]
+        completed_actions = [ResearchAction.from_dict(a) for a in data.get("completed_actions", [])]
         kwargs = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         kwargs["findings"] = findings
         kwargs["gaps"] = gaps
         kwargs["opportunities"] = opportunities
+        kwargs["hypotheses"] = hypotheses
+        kwargs["pending_actions"] = pending_actions
+        kwargs["completed_actions"] = completed_actions
         return cls(**kwargs)
 
     def mark_updated(self) -> None:
@@ -117,6 +130,39 @@ class ResearchState:
         return [
             o for o in self.opportunities
             if o.status in (OpportunityStatus.PENDING, OpportunityStatus.ACTING)
+        ]
+
+    def apply(self, event: StateEvent) -> None:
+        """Unified event-driven mutation. Use StateUpdater handlers internally."""
+        from paperwise.memory.state_updater import StateUpdater
+        StateUpdater.apply(self, event)
+
+    def expire_stale_opportunities(self, ttl_hours: float = 72) -> list[ResearchOpportunity]:
+        """Mark pending opportunities older than TTL as expired."""
+        from datetime import datetime as dt
+        now = dt.now()
+        expired: list[ResearchOpportunity] = []
+        for opp in self.opportunities:
+            if opp.status != OpportunityStatus.PENDING:
+                continue
+            try:
+                created = dt.fromisoformat(opp.created_at)
+            except (ValueError, TypeError):
+                continue
+            age_hours = (now - created).total_seconds() / 3600
+            if age_hours > ttl_hours:
+                opp.status = OpportunityStatus.EXPIRED
+                expired.append(opp)
+        if expired:
+            self.mark_updated()
+        return expired
+
+    def get_pending_actions(self) -> list[ResearchAction]:
+        """Return actions that are pending or approved but not yet started."""
+        from paperwise.opportunity.action import ActionStatus
+        return [
+            a for a in self.pending_actions
+            if a.status in (ActionStatus.PENDING, ActionStatus.APPROVED)
         ]
 
     def dismiss_opportunity(self, opportunity_id: str) -> bool:
