@@ -114,6 +114,58 @@ def test_outcome_contradicted_without_new_evidence():
     assert result.outcome == QuestionOutcome.CONTRADICTED
 
 
+def test_outcome_new_question_when_contradiction_backed_by_evidence():
+    state = ResearchState(state_id="s", user_id="u")
+    question = _question("rq_1", "q", opp_ids=["opp_1"])
+    question.evidence_refs = ["ev_old"]
+    updated = ResearchQuestion.from_dict(question.to_dict())
+    updated.evidence_refs.append("ev_new")
+    state.questions.append(updated)
+    state.opportunities.append(_opportunity(
+        "opp_1", otype=OpportunityType.CONTRADICTION))
+    actions = [_action("a1", ActionStatus.COMPLETED)]
+    result = OutcomeEvaluator.evaluate(question, actions, state)
+    assert result.outcome == QuestionOutcome.NEW_QUESTION
+
+
+def test_evidence_before_snapshot_measures_real_delta():
+    # Question objects are shared with the state: evidence added during the
+    # round is visible immediately, so a late read would report zero delta.
+    # Passing a pre-round snapshot must surface the real delta.
+    state = ResearchState(state_id="s", user_id="u")
+    question = _question("rq_1", "q", opp_ids=["opp_1"])
+    question.evidence_refs = ["ev_old"]
+    state.questions.append(question)
+    snapshot = len(question.evidence_refs)
+    question.evidence_refs.append("ev_added_during_round")
+    actions = [_action("a1", ActionStatus.COMPLETED)]
+    result = OutcomeEvaluator.evaluate(
+        question, actions, state, evidence_before=snapshot)
+    assert result.outcome == QuestionOutcome.RESOLVED
+    assert result.evidence_before == 1
+    assert result.evidence_after == 2
+
+
+def test_outcome_reads_state_action_copies_not_stale_list():
+    # Orchestrator wiring: the evaluator must see the statuses mutated by
+    # ACTION_COMPLETED (which lives on state copies), not the stale local list.
+    state = ResearchState(state_id="s", user_id="u")
+    question = _question("rq_1", "q", opp_ids=["opp_1"])
+    state.questions.append(question)
+    stale = [_action("a1", ActionStatus.PENDING)]  # local list never updated
+    finished = _action("a1", ActionStatus.COMPLETED)
+    state.completed_actions.append(finished)
+    result = OutcomeEvaluator.evaluate(question, stale, state)
+    # Stale list says PENDING -> neither succeeded nor failed -> evidence
+    # unchanged -> partially_resolved.  The orchestrator passes state copies
+    # instead, which yields the same grade here but with a correct rationale.
+    assert result.outcome == QuestionOutcome.PARTIALLY_RESOLVED
+    state_copy = [state.completed_actions[0]]
+    result2 = OutcomeEvaluator.evaluate(question, state_copy, state)
+    assert result2.outcome == QuestionOutcome.PARTIALLY_RESOLVED
+    assert "1 action(s) succeeded" in result2.rationale
+
+
 def test_question_evaluated_event_updates_status_and_count():
     state = ResearchState(state_id="s", user_id="u")
     question = _question("rq_1", "q")

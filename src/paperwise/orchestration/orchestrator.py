@@ -558,6 +558,12 @@ class SmartOrchestrator:
               StateEventType.QUESTION_STATUS_CHANGED,
               payload={"question_id": question.question_id, "status": "active"},
           ))
+      # Snapshot evidence counts before actions run: question objects are
+      # shared with the state, so a late read would already include evidence
+      # added during the round and the delta would always be zero.
+      evidence_before_map = {
+          q.question_id: len(q.evidence_refs) for q in active_questions
+      }
       active_qids = {q.question_id for q in active_questions}
       active_opp_ids = {
           oid
@@ -644,13 +650,29 @@ class SmartOrchestrator:
                   ))
 
       # P8 Phase 3: evaluate outcomes for each targeted question.
+      # Evaluate against the state's action copies: ACTION_COMPLETED mutates
+      # those (and moves them to completed_actions), while the local `actions`
+      # list keeps its pre-execution statuses.
+      state_actions = {
+          a.action_id: a
+          for a in research_state.pending_actions + research_state.completed_actions
+      }
       evaluations = []
       spawned_questions = []
       for question in active_questions:
-          q_actions = [a for a in actions if a.opportunity_id in question.source_opportunities]
+          q_actions = [
+              state_actions.get(a.action_id, a)
+              for a in actions
+              if a.opportunity_id in question.source_opportunities
+          ]
           if not q_actions:
               continue
-          result = self.outcome_evaluator.evaluate(question, q_actions, research_state)
+          result = self.outcome_evaluator.evaluate(
+              question,
+              q_actions,
+              research_state,
+              evidence_before=evidence_before_map.get(question.question_id),
+          )
           research_state.apply(StateEvent(
               StateEventType.QUESTION_EVALUATED,
               payload={

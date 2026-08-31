@@ -49,6 +49,7 @@ class OutcomeEvaluator:
         question: ResearchQuestion,
         actions: list[ResearchAction],
         state: ResearchState,
+        evidence_before: int | None = None,
     ) -> OutcomeResult:
         """Evaluate one question after its actions ran.
 
@@ -60,8 +61,13 @@ class OutcomeEvaluator:
         4. A CONTRADICTION opportunity is linked -> contradicted (when no new
            evidence was gained) or new_question (when the contradiction is
            backed by new evidence, which raises a follow-up question to settle)
+
+        ``evidence_before`` lets the caller snapshot the evidence count before
+        the action round: question objects are shared with the state, so a
+        late read would already include evidence added during the round.
         """
-        evidence_before = len(question.evidence_refs)
+        if evidence_before is None:
+            evidence_before = len(question.evidence_refs)
         evidence_after = len(
             state.questions[
                 next(
