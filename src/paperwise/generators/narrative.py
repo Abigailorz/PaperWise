@@ -40,6 +40,8 @@ class ResearchNarrative:
     findings_summary: list[dict[str, Any]] = field(default_factory=list)
     hypotheses_summary: list[dict[str, Any]] = field(default_factory=list)
     opportunities_summary: list[dict[str, Any]] = field(default_factory=list)
+    questions_summary: list[dict[str, Any]] = field(default_factory=list)
+    actions_summary: list[dict[str, Any]] = field(default_factory=list)
     evidence_snippets: list[dict[str, Any]] = field(default_factory=list)
     facts: dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +69,24 @@ class ResearchNarrative:
         narrative.opportunities_summary = [
             {"type": o.type.value, "title": o.title, "confidence": o.confidence, "status": o.status.value}
             for o in research_state.opportunities
+        ]
+        narrative.questions_summary = [
+            {
+                "question": q.question,
+                "status": q.status,
+                "importance": q.importance,
+                "source_opportunities": q.source_opportunities,
+            }
+            for q in getattr(research_state, "questions", [])
+        ]
+        narrative.actions_summary = [
+            {
+                "action_type": a.action_type.value,
+                "objective": a.objective,
+                "status": a.status.value,
+                "risk_level": a.risk_level.value,
+            }
+            for a in getattr(research_state, "pending_actions", []) + getattr(research_state, "completed_actions", [])
         ]
         if evidence_pack:
             narrative.evidence_snippets = [
@@ -116,6 +136,14 @@ class ResearchNarrative:
             lines.append("\n## Hypotheses")
             for h in self.hypotheses_summary[:3]:
                 lines.append(f"- {h['statement']} ({h['status']})")
+        if self.questions_summary:
+            lines.append("\n## Research Questions")
+            for q in self.questions_summary[:3]:
+                lines.append(f"- {q['question']} ({q['status']})")
+        if self.actions_summary:
+            lines.append("\n## Research Actions")
+            for a in self.actions_summary[:3]:
+                lines.append(f"- [{a['status']}] {a['action_type']}: {a['objective'][:100]}")
         if self.opportunities_summary:
             lines.append("\n## Open Opportunities")
             for o in self.opportunities_summary[:3]:

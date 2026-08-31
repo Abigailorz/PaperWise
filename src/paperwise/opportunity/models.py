@@ -66,6 +66,7 @@ class ResearchOpportunity:
 
     related_entities: list[str] = field(default_factory=list)
     suggested_actions: list[str] = field(default_factory=list)
+    question: str = ""
 
     status: OpportunityStatus = OpportunityStatus.PENDING
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())

@@ -15,6 +15,33 @@ from paperwise.core.hierarchical_memory import HierarchicalMemory
 
 
 @dataclass
+class ContextRetrievalPolicy:
+    """Explicit, bounded retrieval policy for context assembly."""
+
+    top_k: int = 5
+    max_chars: int = 4000
+    include_profile: bool = True
+    include_episodes: bool = True
+    include_procedures: bool = True
+    include_paper_context: bool = True
+
+    def for_node(self, node_id: str) -> "ContextRetrievalPolicy":
+        """Create a node-aware policy; never enables full-paper context."""
+        policy = ContextRetrievalPolicy(
+            top_k=self.top_k,
+            max_chars=self.max_chars,
+            include_profile=True,
+            include_episodes=False,
+            include_procedures=True,
+            include_paper_context=True,
+        )
+        if node_id in ("generate_report", "generate_pptx", "revision", "report_assemble", "ppt_assemble"):
+            policy.include_paper_context = False
+            policy.include_episodes = True
+        return policy
+
+
+@dataclass
 class ContextPackage:
     """Assembled context for a task."""
     profile: list[dict] = field(default_factory=list)
@@ -119,46 +146,52 @@ class ContextEngine:
         research_state: ResearchState,
         hierarchical_memory: Optional[HierarchicalMemory] = None,
         top_k: int = 5,
+        policy: Optional[ContextRetrievalPolicy] = None,
     ) -> ContextPackage:
         pkg = ContextPackage()
+        policy = policy or ContextRetrievalPolicy(top_k=top_k, max_chars=4000)
+        effective_top_k = policy.top_k or top_k
 
         # Profile: research domains, preferences, facts above threshold
-        profile_cards = self.user_memory.query(min_confidence=0.5, limit=top_k)
-        for card in profile_cards:
-            if card.status != "active":
-                continue
-            data_str = ", ".join(f"{k}={v}" for k, v in card.data.items())
-            pkg.profile.append({
-                "category": card.category,
-                "data": data_str,
-                "confidence": card.confidence,
-                "source": card.source,
-            })
+        if policy.include_profile:
+            profile_cards = self.user_memory.query(min_confidence=0.5, limit=effective_top_k)
+            for card in profile_cards:
+                if card.status != "active":
+                    continue
+                data_str = ", ".join(f"{k}={v}" for k, v in card.data.items())
+                pkg.profile.append({
+                    "category": card.category,
+                    "data": data_str,
+                    "confidence": card.confidence,
+                    "source": card.source,
+                })
 
         # Episodes: similar task_type or entity
         task_type = research_state.intent or "analysis"
-        episodes = self.episodic_memory.query(task_type=task_type, entity=research_state.current_paper or "", limit=top_k)
-        for ep in episodes:
-            pkg.episodes.append({
-                "goal": ep.goal,
-                "findings": ep.findings,
-                "outcome": ep.outcome,
-            })
+        if policy.include_episodes:
+            episodes = self.episodic_memory.query(task_type=task_type, entity=research_state.current_paper or "", limit=effective_top_k)
+            for ep in episodes:
+                pkg.episodes.append({
+                    "goal": ep.goal,
+                    "findings": ep.findings,
+                    "outcome": ep.outcome,
+                })
 
         # Procedures: match task type
-        procedures = self.procedural_memory.match(task_type, {"paper": research_state.current_paper or ""})
-        for pat in procedures[:top_k]:
-            pkg.procedures.append({
-                "steps": pat.preferred_steps,
-                "preferences": pat.preferences,
-                "success_rate": pat.success_rate,
-            })
+        if policy.include_procedures:
+            procedures = self.procedural_memory.match(task_type, {"paper": research_state.current_paper or ""})
+            for pat in procedures[:effective_top_k]:
+                pkg.procedures.append({
+                    "steps": pat.preferred_steps,
+                    "preferences": pat.preferences,
+                    "success_rate": pat.success_rate,
+                })
 
         # Knowledge base: search current paper context
-        if self.knowledge_base and research_state.current_paper:
+        if policy.include_paper_context and self.knowledge_base and research_state.current_paper:
             query = " ".join([research_state.current_task] + [g.description for g in research_state.gaps[:3]])
             try:
-                results = self.knowledge_base.search(query, top_k=top_k, search_chunks=True)
+                results = self.knowledge_base.search(query, top_k=effective_top_k, search_chunks=True)
                 for r in results:
                     pkg.paper_context.append({
                         "doc_id": r.get("doc_id", ""),
@@ -180,8 +213,11 @@ class ContextEngine:
         hierarchical_memory: Optional[HierarchicalMemory] = None,
         top_k: int = 5,
         max_chars: int = 4000,
+        policy: Optional[ContextRetrievalPolicy] = None,
     ) -> ContextPackage:
         """为特定子 Agent 节点组装并截断上下文。"""
-        pkg = self.assemble(research_state, hierarchical_memory=hierarchical_memory, top_k=top_k)
+        retrieval_policy = policy or ContextRetrievalPolicy(top_k=top_k, max_chars=max_chars)
+        retrieval_policy = retrieval_policy.for_node(node_id)
+        pkg = self.assemble(research_state, hierarchical_memory=hierarchical_memory, top_k=top_k, policy=retrieval_policy)
         pkg = pkg.for_node(node_id)
-        return pkg.truncate(max_chars)
+        return pkg.truncate(retrieval_policy.max_chars)

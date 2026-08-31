@@ -27,6 +27,8 @@ class StateEventType(str, Enum):
     CLAIM_REJECTED = "claim_rejected"
     GAP_DETECTED = "gap_detected"
     OPPORTUNITY_CREATED = "opportunity_created"
+    RESEARCH_QUESTION_CREATED = "research_question_created"
+    ACTION_PLANNED = "action_planned"
     ACTION_STARTED = "action_started"
     ACTION_COMPLETED = "action_completed"
     HYPOTHESIS_CREATED = "hypothesis_created"
@@ -126,18 +128,56 @@ class StateUpdater:
             state.add_opportunity(opp_data)
 
     @staticmethod
+    def _on_research_question_created(state: ResearchState, event: StateEvent) -> None:
+        from paperwise.memory.research_question import ResearchQuestion
+        question_data = event.payload.get("question")
+        if not isinstance(question_data, (dict, ResearchQuestion)):
+            return
+        question = ResearchQuestion.from_dict(question_data) if isinstance(question_data, dict) else question_data
+        if question.question_id not in {item.question_id for item in state.questions}:
+            state.questions.append(question)
+
+    @staticmethod
+    def _on_action_planned(state: ResearchState, event: StateEvent) -> None:
+        from paperwise.opportunity.action import ResearchAction
+        for item in event.payload.get("actions", []):
+            action = ResearchAction.from_dict(item) if isinstance(item, dict) else item
+            if isinstance(action, ResearchAction) and action.action_id not in {
+                existing.action_id for existing in state.pending_actions
+            }:
+                state.pending_actions.append(action)
+
+    @staticmethod
     def _on_action_started(state: ResearchState, event: StateEvent) -> None:
-        opp_id = event.payload.get("opportunity_id", "")
         from paperwise.opportunity.models import OpportunityStatus
+        from paperwise.opportunity.action import ActionStatus
+        action_id = event.payload.get("action_id", "")
+        opp_id = event.payload.get("opportunity_id", "")
+        for action in state.pending_actions:
+            if action.action_id == action_id:
+                action.status = ActionStatus.RUNNING
+                opp_id = opp_id or action.opportunity_id
         for opp in state.opportunities:
             if opp.opportunity_id == opp_id:
                 opp.status = OpportunityStatus.ACTING
 
     @staticmethod
     def _on_action_completed(state: ResearchState, event: StateEvent) -> None:
+        from paperwise.opportunity.models import OpportunityStatus
+        from paperwise.opportunity.action import ActionStatus
+        action_id = event.payload.get("action_id", "")
         opp_id = event.payload.get("opportunity_id", "")
         success = event.payload.get("success", False)
-        from paperwise.opportunity.models import OpportunityStatus
+        selected = None
+        for action in state.pending_actions:
+            if action.action_id == action_id:
+                selected = action
+                action.status = ActionStatus.COMPLETED if success else ActionStatus.FAILED
+                opp_id = opp_id or action.opportunity_id
+                break
+        if selected is not None:
+            state.pending_actions = [item for item in state.pending_actions if item.action_id != action_id]
+            state.completed_actions.append(selected)
         for opp in state.opportunities:
             if opp.opportunity_id == opp_id:
                 if success:

@@ -66,6 +66,7 @@ class GeneratePPTXTool(BaseTool):
 
         paper_text = (pd / "text.md").read_text(encoding="utf-8", errors="replace")
         sections = self._collect_sections(pd)
+        self._collect_narrative(pd, sections)
 
         title = meta.get("title") or pd.name
         deck = None
@@ -105,3 +106,24 @@ class GeneratePPTXTool(BaseTool):
         if not sections.get("overview") and (pd / "text.md").exists():
             sections["overview"] = (pd / "text.md").read_text(encoding="utf-8", errors="replace")[:4000]
         return sections
+
+    @staticmethod
+    def _collect_narrative(pd: Path, sections: dict) -> None:
+        """Consume the unified research narrative instead of re-deriving reasoning."""
+        narrative_path = pd / "research_narrative.json"
+        if not narrative_path.exists():
+            return
+        try:
+            narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+            sections["research_narrative"] = json.dumps(
+                {
+                    "findings": narrative.get("findings_summary", []),
+                    "hypotheses": narrative.get("hypotheses_summary", []),
+                    "questions": narrative.get("questions_summary", []),
+                    "actions": narrative.get("actions_summary", []),
+                    "evidence": narrative.get("evidence_snippets", []),
+                },
+                ensure_ascii=False,
+            )[:8000]
+        except Exception:
+            return

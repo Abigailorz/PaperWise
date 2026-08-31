@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from paperwise.memory.storage import create_storage
+from paperwise.memory.research_question import ResearchQuestion
 from paperwise.memory.state_updater import Hypothesis, StateEvent
 from paperwise.opportunity.action import ResearchAction
 from paperwise.opportunity.models import (
@@ -56,6 +57,7 @@ class ResearchState:
     failed_nodes: list[str] = field(default_factory=list)
     confidence: float = 0.0
     opportunities: list[ResearchOpportunity] = field(default_factory=list)
+    questions: list[ResearchQuestion] = field(default_factory=list)
     hypotheses: list[Hypothesis] = field(default_factory=list)
     pending_actions: list[ResearchAction] = field(default_factory=list)
     completed_actions: list[ResearchAction] = field(default_factory=list)
@@ -64,6 +66,7 @@ class ResearchState:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["opportunities"] = [o.to_dict() for o in self.opportunities]
+        data["questions"] = [q.to_dict() for q in self.questions]
         data["pending_actions"] = [a.to_dict() for a in self.pending_actions]
         data["completed_actions"] = [a.to_dict() for a in self.completed_actions]
         return data
@@ -74,6 +77,7 @@ class ResearchState:
         findings = [Finding(**f) for f in data.get("findings", [])]
         gaps = [KnowledgeGap(**g) for g in data.get("gaps", [])]
         opportunities = [ResearchOpportunity.from_dict(o) for o in data.get("opportunities", [])]
+        questions = [ResearchQuestion.from_dict(q) for q in data.get("questions", [])]
         hypotheses = [Hypothesis(**h) for h in data.get("hypotheses", [])]
         pending_actions = [ResearchAction.from_dict(a) for a in data.get("pending_actions", [])]
         completed_actions = [ResearchAction.from_dict(a) for a in data.get("completed_actions", [])]
@@ -81,6 +85,7 @@ class ResearchState:
         kwargs["findings"] = findings
         kwargs["gaps"] = gaps
         kwargs["opportunities"] = opportunities
+        kwargs["questions"] = questions
         kwargs["hypotheses"] = hypotheses
         kwargs["pending_actions"] = pending_actions
         kwargs["completed_actions"] = completed_actions
@@ -173,6 +178,10 @@ class ResearchState:
                 self.mark_updated()
                 return True
         return False
+
+    def get_open_questions(self) -> list[ResearchQuestion]:
+        """Return open or active questions for planning."""
+        return [question for question in self.questions if question.status in ("open", "active")]
 
 
 class ResearchStateManager:

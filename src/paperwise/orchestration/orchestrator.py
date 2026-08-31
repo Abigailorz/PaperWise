@@ -26,6 +26,8 @@ from paperwise.orchestration.dynamic_planner import (
 )
 from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
+from paperwise.memory.question_registry import ResearchQuestionRegistry
+from paperwise.memory.state_updater import StateEvent, StateEventType
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
 from paperwise.opportunity.action_planner import ActionPlanner
@@ -83,6 +85,7 @@ class SmartOrchestrator:
       self.action_planner = ActionPlanner()
       self.opportunity_surfacer = OpportunitySurfacer()
       self.hypothesis_engine = HypothesisEngine()
+      self.question_registry = ResearchQuestionRegistry()
       self.research_graph_builder = ResearchGraphBuilder()
       self.research_graph_store = ResearchGraphStore(self.workspace, user_id="default")
       self.enable_opportunity_actions = enable_opportunity_actions
@@ -211,12 +214,16 @@ class SmartOrchestrator:
 
       # P4 Phase 3: 新任务来临时，surface 历史中相关的 pending 机会（主动但不打扰）
       surfaced_opps = []
+      surfaced_actions = []
       try:
           prior_state = self.research_state_manager.get()
-          if prior_state and prior_state.opportunities:
-              surfaced_opps = self.opportunity_surfacer.surface(task, prior_state.opportunities)
+          if prior_state:
+              if prior_state.opportunities:
+                  surfaced_opps = self.opportunity_surfacer.surface(task, prior_state.opportunities)
+              surfaced_actions = prior_state.get_pending_actions()
       except Exception:
           surfaced_opps = []
+          surfaced_actions = []
 
       # P6 Phase B: Graph 驱动 Planner——查询持久图谱中的 gap，转为下一轮机会
       graph_opps = []
@@ -243,6 +250,11 @@ class SmartOrchestrator:
           research_state.add_opportunity(opp)
       for opp in graph_opps:
           research_state.add_opportunity(opp)
+      if surfaced_actions:
+          research_state.apply(StateEvent(
+              StateEventType.ACTION_PLANNED,
+              payload={"actions": [action.to_dict() for action in surfaced_actions]},
+          ))
       self.research_state_manager.save(research_state)
 
       context_package = self.memory_adapter.assemble_context(research_state)
@@ -391,9 +403,18 @@ class SmartOrchestrator:
           hypotheses = self.hypothesis_engine.generate(opportunities)
           for hyp in hypotheses:
               research_state.hypotheses.append(hyp)
+          questions = self.question_registry.derive(
+              opportunities + research_state.get_active_opportunities()
+          )
+          for question in questions:
+              research_state.apply(StateEvent(
+                  StateEventType.RESEARCH_QUESTION_CREATED,
+                  payload={"question": question.to_dict()},
+              ))
           if opportunities:
               self.research_state_manager.save(research_state)
               self._write_status(paper_dir, "opportunities", [o.to_dict() for o in opportunities])
+              self._write_status(paper_dir, "research_questions", [q.to_dict() for q in questions])
           # P5: 将 Evidence / Finding / Opportunity 合并为可持久化 Research Graph。
           evidence_path = paper_dir / "evidence" / "evidence_pack.json"
           evidence_packs = [EvidencePack.load(evidence_path)] if evidence_path.exists() else []
@@ -515,6 +536,7 @@ class SmartOrchestrator:
       默认关闭（enable_opportunity_actions=False），避免未经确认就消耗 token。
       """
       from paperwise.opportunity.action_planner import ActionResult
+      from paperwise.opportunity.action import ActionStatus
 
       if not self.enable_opportunity_actions:
           return []
@@ -523,40 +545,74 @@ class SmartOrchestrator:
           o for o in research_state.get_active_opportunities()
           if o.confidence >= self.opportunity_act_threshold
       ]
+      if not actionable:
+          return []
+
+      actions = self.action_planner.plan_actions(actionable, research_state, max_actions=3)
+      research_state.apply(StateEvent(
+          StateEventType.ACTION_PLANNED,
+          payload={"actions": [action.to_dict() for action in actions]},
+      ))
+      auto_actions = [
+          action for action in actions
+          if action.is_auto_executable and action.status == ActionStatus.PENDING
+      ]
+      if not auto_actions:
+          self.research_state_manager.save(research_state)
+          return []
+
+      for action in auto_actions:
+          research_state.apply(StateEvent(
+              StateEventType.ACTION_STARTED,
+              payload={"action_id": action.action_id, "opportunity_id": action.opportunity_id},
+          ))
       results = []
-      for opp in actionable:
-          self.action_planner.mark_acting(opp)
-          plan = self.action_planner.to_executable(
-              self.action_planner.build_action_plan(opp)
-          )
-          state = GraphState(
-              task=research_state.current_task,
-              budget={
-                  "token_limit": self.base_config.token_budget,
-                  "step_limit": self.base_config.max_steps,
-              },
-          )
-          state.set_artifact("paper_dir", paper_dir)
-          state.set_artifact("task_text", research_state.current_task)
-          state.set_artifact("research_state_id", research_state.state_id)
-          executor = self._make_executor()
-          try:
-              exec_result = await executor.run(plan, state, self._emit_progress)
-              result = ActionResult(
-                  opportunity_id=opp.opportunity_id,
-                  success=exec_result.get("success", False),
-                  completed_nodes=list(exec_result.get("completed_nodes", [])),
-                  failed_nodes=list(exec_result.get("failed_nodes", [])),
-                  error_message=exec_result.get("error_message", ""),
-              )
-          except Exception as e:
-              result = ActionResult(
-                  opportunity_id=opp.opportunity_id,
-                  success=False,
-                  error_message=str(e),
-              )
-          self.action_planner.write_back(opp, result)
-          results.append(result)
+      plan = self.action_planner.actions_to_dag(auto_actions)
+      state = GraphState(
+          task=research_state.current_task,
+          budget={
+              "token_limit": self.base_config.token_budget,
+              "step_limit": self.base_config.max_steps,
+          },
+      )
+      state.set_artifact("paper_dir", paper_dir)
+      state.set_artifact("task_text", research_state.current_task)
+      state.set_artifact("research_state_id", research_state.state_id)
+      executor = self._make_executor()
+      try:
+          exec_result = await executor.run(plan, state, self._emit_progress)
+          execution_success = bool(exec_result.get("success", False))
+          completed_nodes = list(exec_result.get("completed_nodes", []))
+          failed_nodes = list(exec_result.get("failed_nodes", []))
+      except Exception as exc:
+          execution_success = False
+          completed_nodes = []
+          failed_nodes = [action.action_id for action in auto_actions]
+          for action in auto_actions:
+              if action.opportunity_id not in {result.opportunity_id for result in results}:
+                  results.append(ActionResult(
+                      opportunity_id=action.opportunity_id,
+                      success=False,
+                      error_message=str(exc),
+                  ))
+      else:
+          for action in auto_actions:
+              research_state.apply(StateEvent(
+                  StateEventType.ACTION_COMPLETED,
+                  payload={
+                      "action_id": action.action_id,
+                      "opportunity_id": action.opportunity_id,
+                      "success": execution_success,
+                  },
+              ))
+              if action.opportunity_id not in {result.opportunity_id for result in results}:
+                  results.append(ActionResult(
+                      opportunity_id=action.opportunity_id,
+                      success=execution_success,
+                      completed_nodes=completed_nodes,
+                      failed_nodes=failed_nodes,
+                      error_message=exec_result.get("error_message", ""),
+                  ))
 
       if results:
           self.research_state_manager.save(research_state)
@@ -793,14 +849,16 @@ class SmartOrchestrator:
           role="Presentation Writer",
           system_prompt=(
               "You are an academic presentation writer. Use the extracted facts and verified numbers "
-              "to produce clear slides. Every factual claim must cite the source."
+              "to produce clear slides. Prefer research_narrative.json as the primary source of "
+              "findings, hypotheses, questions, actions, and evidence. Every factual claim must cite the source."
           ),
           task_template=(
               f"Generate academic slides for the task: {task}\n\n"
               f"Based on the paper at {paper_dir}.\n\n"
               "1. Read facts.json and verified.json (if they exist).\n"
-              "2. Use skill_load nature-paper2ppt when appropriate, else generate_pptx.\n"
-              "3. Cite sources as [source: text.md Lxxx-Lyyy]."
+              "2. Read research_narrative.json when it exists and use it as the primary source.\n"
+              "3. Use skill_load nature-paper2ppt when appropriate, else generate_pptx.\n"
+              "4. Cite sources as [source: text.md Lxxx-Lyyy]."
           ),
           allowed_tools=["read_file", "write_file", "edit_file", "apply_patch", "glob", "grep", "generate_pptx", "skill_load", "skill_list"],
           output_path="slides.pptx",

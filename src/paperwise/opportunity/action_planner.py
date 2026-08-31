@@ -15,6 +15,7 @@ from typing import Any, Optional
 from paperwise.core.plan import Plan
 from paperwise.opportunity.action import (
     ACTION_RISK_LEVELS,
+    ActionStatus,
     ActionRisk,
     ActionStatus,
     ActionType,
@@ -94,6 +95,12 @@ class ActionPlanner:
         actions: list[ResearchAction] = []
         for opp in opportunities:
             if opp.status != OpportunityStatus.PENDING:
+                continue
+            existing_pending = {
+                existing.opportunity_id for existing in research_state.pending_actions
+                if existing.status in (ActionStatus.PENDING, ActionStatus.APPROVED, ActionStatus.RUNNING)
+            }
+            if opp.opportunity_id in existing_pending:
                 continue
             action_types = OPPORTUNITY_TO_ACTIONS.get(opp.type, (ActionType.RETRIEVE_EVIDENCE,))
             for action_type in action_types:

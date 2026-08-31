@@ -61,6 +61,25 @@ class ResearchGraphBuilder:
         graph.add_edge(ResearchEdge(user.node_id, project.node_id, RelationType.OWNS, confidence=1.0))
         graph.add_edge(ResearchEdge(project.node_id, question.node_id, RelationType.STUDIES, confidence=1.0))
 
+        question_nodes = {}
+        for research_question in research_state.questions:
+            question_node = graph.add_node(ResearchNode(
+                node_id=research_question.question_id,
+                entity_type=EntityType.RESEARCH_QUESTION,
+                label=research_question.question[:120],
+                description=research_question.question,
+                confidence=research_question.importance,
+                metadata={
+                    "status": research_question.status,
+                    "source_opportunities": research_question.source_opportunities,
+                },
+            ))
+            question_nodes[research_question.question_id] = question_node
+            graph.add_edge(ResearchEdge(
+                project.node_id, question_node.node_id,
+                RelationType.STUDIES, confidence=1.0,
+            ))
+
         paper = graph.add_node(ResearchNode(
             node_id=_hash_id("paper", paper_label),
             entity_type=EntityType.PAPER,
@@ -227,6 +246,18 @@ class ResearchGraphBuilder:
                     _hash_id("evidence", ref.source_id) for ref in opportunity.evidence[:3]
                 ],
             ))
+            for research_question in research_state.questions:
+                if opportunity.opportunity_id not in research_question.source_opportunities:
+                    continue
+                question_node = question_nodes.get(research_question.question_id)
+                if question_node is not None:
+                    graph.add_edge(ResearchEdge(
+                        question_node.node_id, opportunity_node.node_id,
+                        relation, confidence=opportunity.confidence,
+                        evidence_ids=[
+                            _hash_id("evidence", ref.source_id) for ref in opportunity.evidence[:3]
+                        ],
+                    ))
 
         return graph
 
