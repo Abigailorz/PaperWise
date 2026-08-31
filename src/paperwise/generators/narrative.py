@@ -74,6 +74,8 @@ class ResearchNarrative:
             {
                 "question": q.question,
                 "status": q.status,
+                "outcome": q.outcome,
+                "evaluation_count": q.evaluation_count,
                 "importance": q.importance,
                 "source_opportunities": q.source_opportunities,
             }

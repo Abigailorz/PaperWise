@@ -27,6 +27,8 @@ from paperwise.orchestration.dynamic_planner import (
 from paperwise.orchestration.memory_adapter import OrchestratorMemoryAdapter
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.question_registry import ResearchQuestionRegistry
+from paperwise.memory.question_prioritizer import QuestionPrioritizer
+from paperwise.memory.outcome_evaluator import OutcomeEvaluator, QuestionOutcome
 from paperwise.memory.state_updater import StateEvent, StateEventType
 from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
@@ -86,6 +88,8 @@ class SmartOrchestrator:
       self.opportunity_surfacer = OpportunitySurfacer()
       self.hypothesis_engine = HypothesisEngine()
       self.question_registry = ResearchQuestionRegistry()
+      self.question_prioritizer = QuestionPrioritizer()
+      self.outcome_evaluator = OutcomeEvaluator()
       self.research_graph_builder = ResearchGraphBuilder()
       self.research_graph_store = ResearchGraphStore(self.workspace, user_id="default")
       self.enable_opportunity_actions = enable_opportunity_actions
@@ -537,15 +541,40 @@ class SmartOrchestrator:
       """
       from paperwise.opportunity.action_planner import ActionResult
       from paperwise.opportunity.action import ActionStatus
+      from paperwise.memory.outcome_evaluator import QuestionOutcome
 
       if not self.enable_opportunity_actions:
           return []
 
-      actionable = [
+      # P8 Phase 1: prioritize questions -> only their source opportunities
+      # drive this round's action planning.
+      active_questions = self.question_prioritizer.prioritize(
+          research_state.get_open_questions(),
+          research_state.opportunities,
+          max_questions=2,
+      )
+      for question in active_questions:
+          research_state.apply(StateEvent(
+              StateEventType.QUESTION_STATUS_CHANGED,
+              payload={"question_id": question.question_id, "status": "active"},
+          ))
+      active_qids = {q.question_id for q in active_questions}
+      active_opp_ids = {
+          oid
+          for q in active_questions
+          for oid in q.source_opportunities
+      }
+
+      all_actionable = [
           o for o in research_state.get_active_opportunities()
           if o.confidence >= self.opportunity_act_threshold
       ]
+      if active_opp_ids:
+          actionable = [o for o in all_actionable if o.opportunity_id in active_opp_ids]
+      else:
+          actionable = all_actionable
       if not actionable:
+          self.research_state_manager.save(research_state)
           return []
 
       actions = self.action_planner.plan_actions(actionable, research_state, max_actions=3)
@@ -614,8 +643,58 @@ class SmartOrchestrator:
                       error_message=exec_result.get("error_message", ""),
                   ))
 
+      # P8 Phase 3: evaluate outcomes for each targeted question.
+      evaluations = []
+      spawned_questions = []
+      for question in active_questions:
+          q_actions = [a for a in actions if a.opportunity_id in question.source_opportunities]
+          if not q_actions:
+              continue
+          result = self.outcome_evaluator.evaluate(question, q_actions, research_state)
+          research_state.apply(StateEvent(
+              StateEventType.QUESTION_EVALUATED,
+              payload={
+                  "question_id": question.question_id,
+                  "status": self.outcome_evaluator.outcome_to_status(result.outcome),
+                  "outcome": result.outcome.value,
+              },
+          ))
+          # P8: new_question outcome deterministically spawns one follow-up
+          # question so the loop can continue in the next round.
+          if result.outcome == QuestionOutcome.NEW_QUESTION:
+              from paperwise.memory.research_question import ResearchQuestion
+              follow_up = ResearchQuestion(
+                  question=f"跟进验证：{question.question}",
+                  importance=round(question.importance * 0.8, 2),
+                  source_opportunities=list(question.source_opportunities),
+              )
+              research_state.apply(StateEvent(
+                  StateEventType.RESEARCH_QUESTION_CREATED,
+                  payload={"question": follow_up.to_dict()},
+              ))
+              spawned_questions.append(follow_up.question_id)
+          evaluations.append(result)
+
       if results:
           self.research_state_manager.save(research_state)
+      if evaluations:
+          self.research_state_manager.save(research_state)
+          self._write_status(paper_dir, "research_loop", {
+              "active_questions": [q.question_id for q in active_questions],
+              "actions_planned": len(actions),
+              "actions_executed": len(auto_actions),
+              "spawned_questions": spawned_questions,
+              "evaluations": [
+                  {
+                      "question_id": r.question_id,
+                      "outcome": r.outcome.value,
+                      "rationale": r.rationale,
+                      "evidence_before": r.evidence_before,
+                      "evidence_after": r.evidence_after,
+                  }
+                  for r in evaluations
+              ],
+          })
       return results
 
   def _select_plan(self, task: str, route, research_state: ResearchState) -> Plan:

@@ -28,6 +28,8 @@ class StateEventType(str, Enum):
     GAP_DETECTED = "gap_detected"
     OPPORTUNITY_CREATED = "opportunity_created"
     RESEARCH_QUESTION_CREATED = "research_question_created"
+    QUESTION_STATUS_CHANGED = "question_status_changed"
+    QUESTION_EVALUATED = "question_evaluated"
     ACTION_PLANNED = "action_planned"
     ACTION_STARTED = "action_started"
     ACTION_COMPLETED = "action_completed"
@@ -136,6 +138,34 @@ class StateUpdater:
         question = ResearchQuestion.from_dict(question_data) if isinstance(question_data, dict) else question_data
         if question.question_id not in {item.question_id for item in state.questions}:
             state.questions.append(question)
+
+    @staticmethod
+    def _on_question_status_changed(state: ResearchState, event: StateEvent) -> None:
+        from paperwise.memory.research_question import QUESTION_STATUSES
+        question_id = event.payload.get("question_id", "")
+        status = event.payload.get("status", "")
+        if status not in QUESTION_STATUSES:
+            raise ValueError(f"Invalid question status: {status}")
+        for question in state.questions:
+            if question.question_id == question_id:
+                question.status = status
+                question.touch()
+
+    @staticmethod
+    def _on_question_evaluated(state: ResearchState, event: StateEvent) -> None:
+        from paperwise.memory.research_question import QUESTION_STATUSES
+        question_id = event.payload.get("question_id", "")
+        status = event.payload.get("status", "")
+        outcome = event.payload.get("outcome", "")
+        if status and status not in QUESTION_STATUSES:
+            raise ValueError(f"Invalid question status: {status}")
+        for question in state.questions:
+            if question.question_id == question_id:
+                if status:
+                    question.status = status
+                question.outcome = outcome
+                question.evaluation_count = int(question.evaluation_count) + 1
+                question.touch()
 
     @staticmethod
     def _on_action_planned(state: ResearchState, event: StateEvent) -> None:

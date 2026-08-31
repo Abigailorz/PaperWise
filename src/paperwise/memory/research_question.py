@@ -29,6 +29,8 @@ class ResearchQuestion:
     question_id: str = ""
     question: str = ""
     status: str = "open"
+    outcome: str = ""
+    evaluation_count: int = 0
     importance: float = 0.7
     source_opportunities: list[str] = field(default_factory=list)
     evidence_refs: list[str] = field(default_factory=list)
