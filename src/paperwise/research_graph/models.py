@@ -38,6 +38,7 @@ class RelationType(str, Enum):
     COMPLEMENTS = "complements"
     SUGGESTS_HYPOTHESIS = "suggests_hypothesis"
     DERIVED_FROM = "derived_from"
+    CITED_BY = "cited_by"
 
 
 @dataclass

@@ -30,7 +30,11 @@ from paperwise.memory.proactive_engine import ProactiveEngine, Recommendation
 from paperwise.opportunity.detector import OpportunityDetector
 from paperwise.opportunity.action_planner import ActionPlanner
 from paperwise.opportunity.surfacer import OpportunitySurfacer
+from paperwise.opportunity.models import OpportunityType, ResearchOpportunity
+from paperwise.opportunity.hypothesis_engine import HypothesisEngine
 from paperwise.research_graph import ResearchGraphBuilder, ResearchGraphStore
+from paperwise.research_graph.query import ResearchGraphQuery
+from paperwise.research_graph.models import EntityType, RelationType
 from paperwise.orchestration.artifact_manager import ArtifactManager
 from paperwise.orchestration.replanner import ReplanAgent
 from paperwise.tools.registry import ToolRegistry
@@ -77,6 +81,7 @@ class SmartOrchestrator:
       self.opportunity_detector = OpportunityDetector()
       self.action_planner = ActionPlanner()
       self.opportunity_surfacer = OpportunitySurfacer()
+      self.hypothesis_engine = HypothesisEngine()
       self.research_graph_builder = ResearchGraphBuilder()
       self.research_graph_store = ResearchGraphStore(self.workspace, user_id="default")
       self.enable_opportunity_actions = enable_opportunity_actions
@@ -212,11 +217,30 @@ class SmartOrchestrator:
       except Exception:
           surfaced_opps = []
 
+      # P6 Phase B: Graph 驱动 Planner——查询持久图谱中的 gap，转为下一轮机会
+      graph_opps = []
+      try:
+          persisted_graph = self.research_graph_store.load()
+          if persisted_graph and persisted_graph.nodes:
+              query = ResearchGraphQuery(persisted_graph)
+              for opp_node in query.find_research_gaps():
+                  graph_opps.append(ResearchOpportunity(
+                      type=OpportunityType.KNOWLEDGE_GAP,
+                      title=opp_node.label,
+                      description=opp_node.description or "Research graph gap",
+                      confidence=max(opp_node.confidence, 0.5),
+                      importance=0.7,
+                  ))
+      except Exception:
+          graph_opps = []
+
       research_state = self.research_state_manager.new(current_task=task)
       research_state.current_paper = str(paper_dir)
       research_state.dag_status = "running"
       # 把 surfaced 的历史机会带入新状态，避免被 new() 覆盖丢失
       for opp in surfaced_opps:
+          research_state.add_opportunity(opp)
+      for opp in graph_opps:
           research_state.add_opportunity(opp)
       self.research_state_manager.save(research_state)
 
@@ -363,6 +387,9 @@ class SmartOrchestrator:
           )
           for opp in opportunities:
               research_state.add_opportunity(opp)
+          hypotheses = self.hypothesis_engine.generate(opportunities)
+          for hyp in hypotheses:
+              research_state.hypotheses.append(hyp)
           if opportunities:
               self.research_state_manager.save(research_state)
               self._write_status(paper_dir, "opportunities", [o.to_dict() for o in opportunities])
@@ -835,7 +862,11 @@ class SmartOrchestrator:
           system_prompt=(
               "You are an academic report writer. Use the extracted facts and verified numbers "
               "to produce a well-structured analysis. Every factual claim must cite the source. "
-              "If a claim cannot be verified, explicitly mark it as 'unverified'."
+              "If a claim cannot be verified, explicitly mark it as 'unverified'.\n"
+              "Claim-level grounding: for every factual assertion, map it to Evidence Pack snippets "
+              "or facts.json entries with line-level citations. Structure each section as: "
+              "Claim → Supporting Evidence → Source Citation. "
+              "If a claim contradicts another, flag the contradiction inline."
           ),
           task_template=(
               f"Write a comprehensive answer for the task: {task}\n\n"

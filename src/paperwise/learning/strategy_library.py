@@ -15,6 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +25,14 @@ from paperwise.memory.storage import create_storage
 logger = logging.getLogger("paperwise")
 
 
+class StrategyLifecycle(str, Enum):
+    """P6 Phase E: strategy maturity states. Promotion requires A/B evidence."""
+
+    CANDIDATE = "candidate"          # newly created, no validation
+    EXPERIMENTAL = "experimental"    # in A/B testing
+    VALIDATED = "validated"          # A/B positive gain confirmed
+    TRUSTED = "trusted"              # consistently positive over multiple rounds
+    DEPRECATED = "deprecated"        # regression confirmed, no longer used
 # signal_type -> (策略名, plan_hints, avoid, 描述)
 _SIGNAL_TO_STRATEGY: dict[str, tuple[str, list[str], list[str], str]] = {
     SignalType.HALLUCINATION: (
@@ -89,6 +98,7 @@ class Strategy:
     failure_count: int = 0
     expected_gain: float = 0.0
     actual_gain: float = 0.0
+    lifecycle: str = StrategyLifecycle.CANDIDATE.value
     last_used: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
@@ -106,6 +116,15 @@ class Strategy:
     @classmethod
     def from_dict(cls, data: dict) -> "Strategy":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+    @property
+    def is_trusted(self) -> bool:
+        return self.lifecycle == StrategyLifecycle.TRUSTED.value
+
+    @property
+    def is_usable(self) -> bool:
+        """Deprecated strategies are excluded from selection."""
+        return self.lifecycle != StrategyLifecycle.DEPRECATED.value
 
 
 class StrategyLibrary:
@@ -162,7 +181,9 @@ class StrategyLibrary:
         """
         candidates = [
             s for s in self.strategies.values()
-            if s.task_type == task_type and s.success_rate >= min_success_rate
+            if s.task_type == task_type
+            and s.success_rate >= min_success_rate
+            and s.is_usable
         ]
         candidates.sort(
             key=lambda s: (s.confidence, s.success_rate, s.use_count),
@@ -202,6 +223,45 @@ class StrategyLibrary:
         strat.actual_gain = actual_gain
         if expected_gain is not None:
             strat.expected_gain = expected_gain
+        strat.last_used = datetime.now().isoformat()
+        self._save()
+        return strat
+
+    def promote_strategy(self, strategy_id: str, eval_report: Any = None) -> Optional[Strategy]:
+        """Promote strategy lifecycle based on A/B evaluation evidence.
+
+        candidate -> experimental -> validated -> trusted
+        A strategy cannot skip states; each promotion requires positive gain.
+        """
+        strat = self.strategies.get(strategy_id)
+        if strat is None:
+            return None
+        current = StrategyLifecycle(strat.lifecycle)
+        gain = getattr(eval_report, "actual_gain", None)
+        if gain is None:
+            gain = strat.actual_gain
+        if gain is None or gain <= 0:
+            return strat
+        if current == StrategyLifecycle.CANDIDATE:
+            strat.lifecycle = StrategyLifecycle.EXPERIMENTAL.value
+        elif current == StrategyLifecycle.EXPERIMENTAL:
+            strat.lifecycle = StrategyLifecycle.VALIDATED.value
+        elif current == StrategyLifecycle.VALIDATED and strat.use_count >= 5 and strat.success_rate >= 0.7:
+            strat.lifecycle = StrategyLifecycle.TRUSTED.value
+        strat.last_used = datetime.now().isoformat()
+        self._save()
+        return strat
+
+    def demote_strategy(self, strategy_id: str) -> Optional[Strategy]:
+        """Demote strategy on regression. validated/trusted -> deprecated."""
+        strat = self.strategies.get(strategy_id)
+        if strat is None:
+            return None
+        current = StrategyLifecycle(strat.lifecycle)
+        if current in (StrategyLifecycle.VALIDATED, StrategyLifecycle.TRUSTED):
+            strat.lifecycle = StrategyLifecycle.DEPRECATED.value
+        elif current == StrategyLifecycle.EXPERIMENTAL:
+            strat.lifecycle = StrategyLifecycle.CANDIDATE.value
         strat.last_used = datetime.now().isoformat()
         self._save()
         return strat
