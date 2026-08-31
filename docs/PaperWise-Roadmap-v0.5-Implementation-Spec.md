@@ -596,6 +596,15 @@ replan，报告写作改为优先消费 Evidence Pack。
 并输出 per-paper 与 user-level 两个层次的图谱。API 暴露
 `GET /api/research-graph`。
 
+### P6 Phase A：Research Loop Foundation ✅（2026-08-31）
+
+实现见 `docs/P6-RESEARCH-LOOP-SPEC.md`。新增 `ResearchAction`（8 种受控
+Action Type，LOW/MEDIUM/HIGH 风险分级）、`ActionPlanner.plan_actions()`
+（确定性 Opportunity→Action 映射，Action Budget 上限 3 条/轮）、
+`actions_to_dag()`（经 `to_executable_plan()` 白名单过滤）、
+`StateUpdater`（8 种事件驱动 ResearchState 变更）与
+`ResearchGraphQuery`（Graph 反向查询层）。新增 25 个测试全部通过。
+
 
 ### P6：Multi-Agent Collaboration ⭐⭐⭐
 
