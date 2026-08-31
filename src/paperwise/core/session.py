@@ -814,6 +814,18 @@ class AgentSession(AgentLoopMixin):
                     emit_buf = ""
                     last_flush = time.time()
 
+            elif event.type == "reasoning_delta":
+                # Model thinking goes to the thinking panel only, never into
+                # the visible reply.
+                emit_buf += event.text
+                if time.time() - last_flush >= 0.5 or any(
+                    event.text.rstrip().endswith(p) for p in ("\n", "。", ".", "!", "?", "：", "）")
+                ):
+                    if emit_buf.strip() and len(emit_buf.strip()) > 3:
+                        self._emit("thinking", emit_buf.strip())
+                    emit_buf = ""
+                    last_flush = time.time()
+
             elif event.type == "tool_call_start":
                 if emit_buf.strip():
                     self._emit("thinking", emit_buf.strip())

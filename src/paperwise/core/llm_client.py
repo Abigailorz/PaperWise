@@ -18,7 +18,7 @@ from paperwise.config.settings import get_settings
 @dataclass
 class StreamEvent:
     """流式响应的单个事件"""
-    type: str  # "text_delta" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "done"
+    type: str  # "text_delta" | "reasoning_delta" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "done"
     text: str = ""
     tool_id: str = ""
     tool_name: str = ""
@@ -128,9 +128,10 @@ class LLMClient:
             if delta.content:
                 yield StreamEvent(type="text_delta", text=delta.content)
 
-            # Reasoning content (DeepSeek-R1, Kimi K3 thinking mode)
+            # Reasoning content (DeepSeek-R1, Kimi K3/GLM thinking mode) —
+            # separate event type so it never mixes into the visible reply.
             if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                yield StreamEvent(type="text_delta", text=delta.reasoning_content)
+                yield StreamEvent(type="reasoning_delta", text=delta.reasoning_content)
 
             # Tool calls
             if delta.tool_calls:

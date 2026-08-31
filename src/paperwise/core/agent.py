@@ -343,6 +343,7 @@ class Agent(AgentLoopMixin):
             tools = self.tools.get_definitions()
 
             text_parts: list[str] = []
+            reasoning_parts: list[str] = []
             emit_buffer = ""
             last_flush = time.time()
             tool_calls_data: dict[str, dict] = {}
@@ -360,6 +361,21 @@ class Agent(AgentLoopMixin):
                         for p in ("\n", ".", "!", "?", ":", ")")
                     )
                     if time.time() - last_flush >= 0.5 or natural_break:
+                        chunk = emit_buffer.strip()
+                        if chunk and len(chunk) > 3:
+                            self._emit("thinking", chunk)
+                        emit_buffer = ""
+                        last_flush = time.time()
+
+                elif event.type == "reasoning_delta":
+                    # Model thinking (GLM/DeepSeek reasoning_content): goes to
+                    # the thinking panel only, never into the visible reply.
+                    reasoning_parts.append(event.text)
+                    emit_buffer += event.text
+                    if time.time() - last_flush >= 0.5 or any(
+                        event.text.rstrip().endswith(p)
+                        for p in ("\n", ".", "!", "?", ":", ")")
+                    ):
                         chunk = emit_buffer.strip()
                         if chunk and len(chunk) > 3:
                             self._emit("thinking", chunk)
@@ -399,7 +415,7 @@ class Agent(AgentLoopMixin):
 
             return LLMResponse(
                 content=full_content, tool_calls=tool_calls,
-                reasoning="",
+                reasoning="".join(reasoning_parts),
                 stop_reason="tool_calls" if tool_calls else "stop",
                 usage={"estimated": True},
             )
