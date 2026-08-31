@@ -642,6 +642,19 @@ Report 和 PPT 作为同一叙事的两个投影（而非独立管线）。DAG �
 
 新增 5 个 Narrative 测试全部通过；全量回归 269/274（5 个为环境文件锁问题）。
 
+**LangSplat P6 全 DAG 评测 PASS（2026-08-31，`glm-5.3-flash`）**：
+
+- `eval_langsplat.py` 完整 DAG `success=true`，8 步收敛
+- 链路：read → re-read → dynamic_research → analyze → generate → review → revision
+- 检出 3 条机会（2 knowledge_gap + 1 missing_evidence），全部带证据、全部 pending
+- Research Graph 24 节点 / 23 边（含 finding 节点）
+- Research Narrative 5 sections / 5 findings，`research_narrative.json` 正确落盘
+- 报告 38,512 bytes 完整生成
+
+**P6 闭环确认**：Evidence → Finding → Opportunity → Graph → Narrative 在
+真实论文上全部贯通；Graph 驱动 Planner、Strategy Lifecycle、Hypothesis Engine
+机制就位（Hypothesis 为 0 是因单篇评测无 MethodComplementarity 机会，属预期）。
+
 
 ### P6：Multi-Agent Collaboration ⭐⭐⭐
 
