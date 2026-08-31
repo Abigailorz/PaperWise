@@ -222,12 +222,12 @@ class AgentSession(AgentLoopMixin):
 
     # ══════════ 核心：对话接口 ══════════
 
-    def _should_orchestrate(self, user_message: str) -> bool:
+    async def _should_orchestrate(self, user_message: str) -> bool:
         """Return True if the task should run through the multi-agent orchestrator."""
         if not self.state.current_paper:
             return False
         classifier = TaskClassifier(self.llm, self.workspace)
-        complexity = classifier.classify(user_message)
+        complexity = await classifier.classify(user_message)
         return complexity.is_complex
 
     async def _run_orchestrated(self, user_message: str) -> AgentResult:
@@ -238,8 +238,14 @@ class AgentSession(AgentLoopMixin):
             workspace=self.workspace,
             base_config=None,
             trace_collector=self.trace_collector,
+            event_callback=self._emit,
         )
+        self._emit("orchestrator", "multi-agent DAG started")
         result = await orchestrator.run(user_message, paper_dir=paper_dir)
+        self._emit(
+            "orchestrator",
+            f"DAG finished · success={result.success} · steps={result.steps}",
+        )
 
         # 记录 orchestrator 子 trace 引用
         if result.trace_id and self.trace_collector.is_active():
@@ -290,7 +296,7 @@ class AgentSession(AgentLoopMixin):
         )
 
         # Route complex tasks on loaded papers through the orchestrator
-        if self._should_orchestrate(user_message):
+        if await self._should_orchestrate(user_message):
             self.trace_collector.add_event(
                 TraceEventType.ROUTER_DECISION,
                 data={"routed_to": "orchestrator", "reason": "complex_task"},

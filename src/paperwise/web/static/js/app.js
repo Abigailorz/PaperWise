@@ -11,6 +11,21 @@ const state = {
 };
 let recPapers = [];
 let agentStatus = { step: '', tools: [] };
+let agentTrace = {
+  items: [],
+  total: 0,
+  dropped: 0,
+  view: 'key',
+  active: false,
+  follow: true,
+  nodes: new Map(),
+  thoughts: 0,
+  tools: 0,
+  routeText: '',
+  planText: '',
+  nodeText: '',
+  thoughtText: '',
+};
 
 function hasPaper() {
   return !!state.paperDir && typeof state.paperDir === 'string';
@@ -50,6 +65,18 @@ async function init() {
   loadSessions();
   refreshRecommendations();
   syncPaperUI();
+  const timeline = document.getElementById('traceTimeline');
+  if (timeline) {
+    timeline.addEventListener('scroll', () => {
+      const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 48;
+      agentTrace.follow = nearBottom;
+      const btn = document.getElementById('traceFollowBtn');
+      if (btn) btn.classList.toggle('muted', !nearBottom);
+    });
+  }
+  document.querySelectorAll('#traceTabs button').forEach(btn => {
+    btn.addEventListener('click', () => setTraceView(btn.dataset.view));
+  });
 }
 
 // ═══════════ WebSocket ═══════════
@@ -63,10 +90,26 @@ function connectWS(tid) {
     for (const line of e.data.split('\n')) {
       try {
         const d = JSON.parse(line);
-        if (d.type === 'step') setAgentStatus(d.detail);
-        else if (d.type === 'thinking') { if (!agentStatus.step) setAgentStatus(d.detail); }
-        else if (d.type === 'tool_start') appendAgentTool(d.detail, false);
-        else if (d.type === 'tool_end') appendAgentTool(d.detail, true);
+        if (d.type === 'step') {
+          addTrace('step', d.detail, d.time);
+          setAgentStatus(d.detail);
+        }
+        else if (d.type === 'thinking') {
+          addTrace('thinking', d.detail, d.time);
+          if (!agentStatus.step) setAgentStatus(d.detail);
+        }
+        else if (d.type === 'tool_start') {
+          addTrace('tool_start', d.detail, d.time);
+          appendAgentTool(d.detail, false);
+        }
+        else if (d.type === 'tool_end') {
+          addTrace('tool_end', d.detail, d.time);
+          appendAgentTool(d.detail, true);
+        }
+        else if (['route','plan','context','agent','orchestrator','review','result','verify','kb_hit','paper_loaded','warn','status'].includes(d.type)) {
+          addTrace(d.type, d.detail, d.time);
+          if (d.type === 'paper_loaded' && !agentStatus.step) setAgentStatus(d.detail);
+        }
         else if (d.type === 'paper_loaded') {
           state.paperTitle = d.detail || state.paperTitle;
           syncPaperUI();
@@ -106,6 +149,8 @@ async function sendMessage(forceMsg) {
   hideBanner();
   addMessage('user', msg);
   showTyping('思考中...');
+  resetAgentTrace();
+  openPanel('agentTrailPanel');
   try {
     const r = await fetch(`/api/sessions/${state.sid}/chat`, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -117,9 +162,11 @@ async function sendMessage(forceMsg) {
     }
     removeTyping();
     addMessage('assistant', d.response);
+    finishAgentTrace(true);
   } catch(e) {
     removeTyping();
     addMessage('assistant', `抱歉，遇到了错误：${e.message}`);
+    finishAgentTrace(false);
   }
 }
 
@@ -137,6 +184,7 @@ async function handleFile(input) {
   }
   addMessage('user', `上传了：${file.name}`);
   showTyping('正在解析论文...');
+  resetAgentTrace();
   const fd = new FormData(); fd.append('file', file);
   try {
     const r = await fetch(`/api/sessions/${state.sid}/upload`, {method:'POST', body:fd});
@@ -144,9 +192,11 @@ async function handleFile(input) {
     removeTyping();
     setPaper(d.paper_dir || null, file.name);
     addMessage('assistant', d.response);
+    finishAgentTrace(true);
   } catch(e) {
     removeTyping();
     addMessage('assistant', `解析失败：${e.message}`);
+    finishAgentTrace(false);
   }
   input.value = '';
 }
@@ -240,6 +290,204 @@ function renderAgentStatus() {
   box.innerHTML = html;
   const c = document.getElementById('chatMessages');
   if (c) c.scrollTop = c.scrollHeight;
+}
+
+// ═══════════ Agent 编排轨迹 ═══════════
+const TRACE_META = {
+  route: { label:'路由', icon:'alt_route' },
+  plan: { label:'规划', icon:'account_tree' },
+  context: { label:'上下文', icon:'layers' },
+  agent: { label:'子代理', icon:'smart_toy' },
+  orchestrator: { label:'编排', icon:'schema' },
+  step: { label:'节点', icon:'check_circle' },
+  thinking: { label:'思考', icon:'psychology' },
+  tool_start: { label:'工具', icon:'construction' },
+  tool_end: { label:'工具完成', icon:'task_alt' },
+  verify: { label:'校验', icon:'verified' },
+  review: { label:'评审', icon:'rate_review' },
+  result: { label:'结果', icon:'flag' },
+  kb_hit: { label:'索引', icon:'storage' },
+  paper_loaded: { label:'论文', icon:'description' },
+  warn: { label:'警告', icon:'warning' },
+  status: { label:'状态', icon:'info' },
+};
+
+function clipTraceText(text, length = 620) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  return value.length > length ? `${value.slice(0, length)}...` : value;
+}
+
+function resetAgentTrace() {
+  agentTrace = {
+    items: [], total: 0, dropped: 0, view: agentTrace.view || 'key',
+    active: true, follow: true, nodes: new Map(), thoughts: 0, tools: 0,
+    routeText: '', planText: '', nodeText: '', thoughtText: '',
+  };
+  renderAgentRibbon();
+  setTraceLive('运行中', 'running');
+  renderTrace();
+}
+
+function finishAgentTrace(ok = true) {
+  if (!agentTrace.active) return;
+  agentTrace.active = false;
+  setTraceLive(ok ? '已完成' : '有异常', ok ? 'done' : 'error');
+  renderAgentRibbon();
+  renderTrace();
+}
+
+function setTraceLive(text, state = 'running') {
+  const el = document.getElementById('traceLive');
+  if (el) { el.textContent = text; el.dataset.state = state; }
+}
+
+function upsertTraceNode(name, status) {
+  if (!name || agentTrace.nodes.has(name) && ['done','failed'].includes(agentTrace.nodes.get(name))) return;
+  agentTrace.nodes.set(name, status);
+}
+
+function addTrace(type, detail, time) {
+  const text = String(detail || '').trim();
+  if (!text) return;
+
+  if (type === 'step') {
+    const match = text.match(/^([A-Za-z0-9_]+):\s*(started|done|failed|replan|retry.*)$/i);
+    if (match) upsertTraceNode(match[1], match[2].toLowerCase());
+  }
+  if (type === 'plan') {
+    const names = text.split('→').map(s => s.trim()).filter(Boolean);
+    names.forEach(name => upsertTraceNode(name, 'planned'));
+  }
+  if (type === 'thinking') agentTrace.thoughts += 1;
+  if (type.startsWith('tool_')) agentTrace.tools += 1;
+  if (type === 'route') agentTrace.routeText = text;
+  if (type === 'orchestrator') agentTrace.routeText = text;
+  if (type === 'plan') agentTrace.planText = text;
+  if (type === 'step') agentTrace.nodeText = text;
+  if (type === 'thinking' && text.length > 12) agentTrace.thoughtText = clipTraceText(text, 180);
+
+  const last = agentTrace.items[agentTrace.items.length - 1];
+  if (type === 'thinking' && last && last.type === 'thinking' && Date.now() - last.ms < 1500) {
+    last.text = clipTraceText(`${last.text} ${text}`, 720);
+    last.time = time || last.time;
+    last.segments = (last.segments || 1) + 1;
+  } else {
+    agentTrace.items.push({
+      type, text: clipTraceText(text, type === 'thinking' ? 720 : 360),
+      time: time || new Date().toLocaleTimeString('zh-CN', {hour12:false}),
+      ms: Date.now(), segments: 1,
+    });
+  }
+
+  agentTrace.total += 1;
+  if (agentTrace.items.length > 180) {
+    agentTrace.dropped += agentTrace.items.length - 180;
+    agentTrace.items = agentTrace.items.slice(-180);
+  }
+  renderTrace();
+  renderAgentRibbon();
+}
+
+function isKeyTrace(item) {
+  return ['route','plan','agent','orchestrator','step','thinking','tool_end','verify','review','result','warn'].includes(item.type);
+}
+
+function setTraceView(view) {
+  agentTrace.view = view;
+  document.querySelectorAll('#traceTabs button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === view);
+  });
+  renderTrace();
+}
+
+function resetTraceFollow() {
+  agentTrace.follow = true;
+  renderTrace();
+}
+
+function showAgentTrailPanel() {
+  openPanel('agentTrailPanel');
+  renderTrace();
+}
+
+function closeAgentTrailPanel() {
+  document.getElementById('agentTrailPanel').classList.remove('show');
+  document.getElementById('panelOverlay').classList.remove('show');
+}
+
+function renderTraceMetrics() {
+  const total = agentTrace.nodes.size;
+  let done = 0, failed = 0;
+  for (const status of agentTrace.nodes.values()) {
+    if (status === 'done') done += 1;
+    if (status === 'failed') failed += 1;
+  }
+  return [
+    { label:'编排节点', value:`${done}/${total}`, tone: failed ? 'error' : 'ok' },
+    { label:'思考片段', value: agentTrace.thoughts, tone:'info' },
+    { label:'工具', value: agentTrace.tools, tone:'info' },
+    { label:'缓冲', value:`${agentTrace.items.length}/${agentTrace.total}`, tone:'muted' },
+  ];
+}
+
+function renderTraceChain() {
+  if (!agentTrace.nodes.size) return '<span class="trace-empty">等待编排计划...</span>';
+  return [...agentTrace.nodes.entries()].map(([name, status]) =>
+    `<span class="trace-node ${status}">${escapeHtml(name)}</span>`
+  ).join('<span class="trace-arrow">→</span>');
+}
+
+function renderAgentRibbon() {
+  const ribbon = document.getElementById('agentRibbon');
+  if (!ribbon) return;
+  ribbon.hidden = false;
+  const route = document.getElementById('ribbonRoute');
+  const node = document.getElementById('ribbonNode');
+  const thought = document.getElementById('ribbonThought');
+  route.textContent = agentTrace.routeText || '等待路由判定...';
+  node.textContent = agentTrace.planText
+    ? `计划：${agentTrace.planText}${agentTrace.nodeText ? ` · 当前：${agentTrace.nodeText}` : ''}`
+    : (agentTrace.nodeText || '等待计划...');
+  thought.textContent = agentTrace.thoughtText ? `思考：${agentTrace.thoughtText}` : '';
+  thought.hidden = !agentTrace.thoughtText;
+}
+
+function renderTrace() {
+  const metricsEl = document.getElementById('traceMetrics');
+  const chainEl = document.getElementById('traceChain');
+  const timeline = document.getElementById('traceTimeline');
+  if (!metricsEl || !chainEl || !timeline) return;
+
+  metricsEl.innerHTML = renderTraceMetrics().map(m =>
+    `<span class="trace-metric ${m.tone}"><i>${m.label}</i><b>${escapeHtml(String(m.value))}</b></span>`
+  ).join('');
+  chainEl.innerHTML = renderTraceChain();
+
+  const shown = agentTrace.items.filter(item => agentTrace.view === 'all' || isKeyTrace(item));
+  if (!shown.length) {
+    timeline.innerHTML = '<div class="trace-empty">暂无轨迹事件。开始一次报告或 PPT 生成后，这里会显示路由、节点、子代理与思考片段。</div>';
+    return;
+  }
+
+  timeline.innerHTML = shown.map(item => {
+    const meta = TRACE_META[item.type] || { label:item.type, icon:'circle' };
+    const segment = item.segments > 1 ? `<i>· ${item.segments} 段</i>` : '';
+    return `<div class="trace-item ${item.type}">
+      <div class="trace-row">
+        <span class="material-symbols-outlined">${meta.icon}</span>
+        <b>${meta.label}</b>
+        <span class="trace-time">${escapeHtml(item.time)} ${segment}</span>
+      </div>
+      <div class="trace-text">${escapeHtml(item.text).replace(/\n/g, '<br>')}</div>
+    </div>`;
+  }).join('');
+
+  const note = document.createElement('div');
+  note.className = 'trace-buffer-note';
+  note.textContent = agentTrace.dropped ? `为保持流畅，已折叠最早 ${agentTrace.dropped} 条事件` : '滚动缓冲区：最多保留 180 条事件';
+  timeline.appendChild(note);
+
+  if (agentTrace.follow) timeline.scrollTop = timeline.scrollHeight;
 }
 
 // ═══════════ 推荐论文 ═══════════
@@ -407,7 +655,7 @@ function triggerDownload(path) {
 
 // ═══════════ 面板控制 ═══════════
 function closeOtherPanels(keep) {
-  for (const id of ['reportPanel', 'memoryPanel', 'editorPanel']) {
+  for (const id of ['reportPanel', 'memoryPanel', 'editorPanel', 'agentTrailPanel']) {
     if (id !== keep) document.getElementById(id).classList.remove('show');
   }
   if (keep !== 'recommendPanel') document.getElementById('recommendPanel').classList.remove('show');

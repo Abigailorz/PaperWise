@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400..700,0..1,0&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/style.css">
+<link rel="stylesheet" href="/static/css/style.css?v=20260901-trace2">
 </head>
 <body>
 
@@ -40,11 +40,22 @@
       <span class="spacer"></span>
       <div class="actions">
         <button class="btn btn-sm" onclick="toggleRecommendPanel()"><span class="material-symbols-outlined">auto_awesome</span>推荐</button>
+        <button class="btn btn-sm" onclick="showAgentTrailPanel()"><span class="material-symbols-outlined">route</span>轨迹</button>
         <button class="btn btn-sm" onclick="toggleMemory()"><span class="material-symbols-outlined">psychology</span>记忆</button>
         <button class="btn btn-sm" onclick="toggleEditor()"><span class="material-symbols-outlined">edit_note</span>编辑</button>
         <button class="btn btn-sm" onclick="toggleReport()"><span class="material-symbols-outlined">description</span>报告</button>
         <button class="btn btn-sm btn-primary" onclick="generatePPTX()" title="用 nature-paper2ppt 技能生成学术汇报 PPT"><span class="material-symbols-outlined">slideshow</span>生成 PPT</button>
       </div>
+    </div>
+
+    <div class="agent-ribbon" id="agentRibbon" hidden>
+      <span class="trace-live" id="ribbonState">运行中</span>
+      <div class="ribbon-main">
+        <div class="ribbon-line" id="ribbonRoute">等待路由</div>
+        <div class="ribbon-line" id="ribbonNode">等待计划</div>
+        <div class="ribbon-line thought" id="ribbonThought"></div>
+      </div>
+      <button class="btn btn-sm" onclick="showAgentTrailPanel()">详情</button>
     </div>
 
     <div class="chat-messages" id="chatMessages"></div>
@@ -78,6 +89,28 @@
   <div class="panel-body">
     <div id="recoTopics"></div>
     <div id="recommendBody"></div>
+  </div>
+</div>
+
+<div class="panel" id="agentTrailPanel">
+  <div class="panel-head">
+    <h3>运行轨迹</h3>
+    <span class="trace-live" id="traceLive">待运行</span>
+    <button class="icon-btn" onclick="closeAgentTrailPanel()"><span class="material-symbols-outlined">close</span></button>
+  </div>
+  <div class="panel-body trace-panel-body">
+    <div class="trace-summary">
+      <div class="trace-metrics" id="traceMetrics"></div>
+      <div class="trace-chain" id="traceChain"></div>
+      <div class="trace-toolbar">
+        <div class="trace-tabs" id="traceTabs">
+          <button data-view="key" class="active">关键</button>
+          <button data-view="all">全部</button>
+        </div>
+        <button class="trace-follow" id="traceFollowBtn" onclick="resetTraceFollow()">跟随最新</button>
+      </div>
+    </div>
+    <div class="trace-timeline" id="traceTimeline"></div>
   </div>
 </div>
 
@@ -115,6 +148,6 @@
 
 <div class="toasts" id="toasts"></div>
 
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=20260901-trace2"></script>
 </body>
 </html>

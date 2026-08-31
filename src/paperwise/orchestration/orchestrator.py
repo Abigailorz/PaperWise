@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from paperwise.core.agent import Agent
 from paperwise.core.types import AgentConfig, AgentResult, TraceEventType
@@ -67,6 +67,7 @@ class SmartOrchestrator:
       use_dynamic_plan: bool = True,
       enable_opportunity_actions: bool = False,
       opportunity_act_threshold: float = 0.7,
+      event_callback: Optional[Callable[[str, str], None]] = None,
   ):
       self.llm = llm_client
       self.workspace = Path(workspace)
@@ -94,6 +95,7 @@ class SmartOrchestrator:
       self.research_graph_store = ResearchGraphStore(self.workspace, user_id="default")
       self.enable_opportunity_actions = enable_opportunity_actions
       self.opportunity_act_threshold = opportunity_act_threshold
+      self.event_callback = event_callback
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
       self._current_context_xml: str = ""
@@ -113,6 +115,11 @@ class SmartOrchestrator:
           metadata={"source": "orchestrator", "workspace": str(self.workspace)},
       )
       route = await self.classifier.classify(task)
+      self._emit(
+          "route",
+          f"{route.complexity.value} · {route.task_type.value} · {route.workflow} "
+          f"({route.confidence}, {route.reason})",
+      )
       self.trace_collector.add_event(
           TraceEventType.ROUTER_DECISION,
           data={"route": self._route_to_dict(route)},
@@ -185,6 +192,7 @@ class SmartOrchestrator:
           workspace_dir=paper_dir,
           trace_collector=self.trace_collector,
       )
+      agent.on_event(self._emit)
 
       # Inject a minimal plan: read paper, then answer
       agent._plan = Plan()
@@ -263,6 +271,11 @@ class SmartOrchestrator:
 
       context_package = self.memory_adapter.assemble_context(research_state)
       self._current_context_xml = context_package.to_xml()
+      self._emit(
+          "context",
+          f"研究状态已装载 · {context_package.size()} items context · "
+          f"{len(research_state.opportunities)} opportunities",
+      )
       self.trace_collector.add_event(
           TraceEventType.CONTEXT_ASSEMBLED,
           data={"context_size": context_package.size()},
@@ -278,6 +291,8 @@ class SmartOrchestrator:
           TraceEventType.PLAN_GENERATED,
           data={"plan": plan.to_dict(), "tasks": [t.to_dict() for t in plan.tasks], "dynamic": self.plan_policy.use_dynamic_plan},
       )
+      plan_nodes = [t.id for t in plan.tasks]
+      self._emit("plan", " → ".join(plan_nodes) if plan_nodes else "empty plan")
       state = GraphState(
           task=task,
           budget={
@@ -311,7 +326,11 @@ class SmartOrchestrator:
           return AgentResult(
               final_output=(
                   f"[Budget or execution limit reached: {budget_err}]\n\n"
-                  + self._assemble_final_output(paper_dir)
+                  + self._assemble_final_output(
+                      paper_dir,
+                      task=state.get_artifact("task_text") or task,
+                      artifacts=state.artifacts,
+                  )
               ),
               success=False,
               error_message=str(budget_err),
@@ -319,6 +338,11 @@ class SmartOrchestrator:
               tool_stats={},
           )
       total_steps += exec_result.get("steps", 0)
+      self._emit(
+          "result",
+          f"DAG完成 · {len(exec_result.get('completed_nodes', []))} done / "
+          f"{len(exec_result.get('failed_nodes', []))} failed · {total_steps} steps",
+      )
 
       for rnd in range(1, self.max_review_rounds + 1):
           findings = self._latest_findings(paper_dir)
@@ -348,11 +372,19 @@ class SmartOrchestrator:
           loop_state.artifacts = state.artifacts.copy()
           loop_state.set_artifact("paper_dir", paper_dir)
           loop_state.set_artifact("task_text", task)
+          self._emit(
+              "review",
+              f"round {rnd}: critical={findings['critical']}, major={findings['major']}",
+          )
           loop_exec = await executor.run(loop_plan, loop_state, self._emit_progress)
           total_steps += loop_exec.get("steps", 0)
           state.artifacts.update(loop_state.artifacts)
 
-      final_text = self._assemble_final_output(paper_dir)
+      final_text = self._assemble_final_output(
+          paper_dir,
+          task=task,
+          artifacts=state.artifacts,
+      )
       success = final_findings["critical"] == 0 and final_findings["major"] == 0
       if not success:
           final_text = (
@@ -518,6 +550,7 @@ class SmartOrchestrator:
       """
       executor = DAGExecutor(
           config=ExecutionConfig(
+              default_timeout=1800.0,
               enable_replan=True,
               replan_callback=self._replan,
               trace_collector=self.trace_collector,
@@ -751,8 +784,13 @@ class SmartOrchestrator:
       return any(_re.search(k, task, _re.IGNORECASE) for k in keywords)
 
   def _emit(self, event_type: str, message: str) -> None:
-      """Emit an orchestration event; currently a no-op logger."""
+      """Emit an orchestration event to the UI and local logger."""
       print(f"[orchestrator:{event_type}] {message}")
+      if self.event_callback:
+          try:
+              self.event_callback(event_type, message)
+          except Exception:
+              pass
 
   def _emit_progress(self, node_id: str, status: str) -> None:
       self._emit("step", f"{node_id}: {status}")
@@ -886,6 +924,10 @@ class SmartOrchestrator:
       paper_dir = Path(state.get_artifact("paper_dir"))
       result = await self._run_pptx_writer(state.get_artifact("task_text"), paper_dir)
       pptx_path = paper_dir / "slides.pptx"
+      if not pptx_path.exists():
+          legacy_path = paper_dir / "presentation" / "slides.pptx"
+          if legacy_path.exists():
+              pptx_path = legacy_path
       if not result.success or not pptx_path.exists():
           raise RuntimeError(result.error_message or "pptx writer failed")
       am = ArtifactManager(paper_dir)
@@ -1102,6 +1144,8 @@ class SmartOrchestrator:
           workspace_dir=paper_dir,
           trace_collector=self.trace_collector,
       )
+      agent.on_event(self._emit)
+      self._emit("agent", f"{spec.name} started · max_steps={max_steps}")
 
       result = await agent.run(spec.task_template)
 
@@ -1115,8 +1159,31 @@ class SmartOrchestrator:
 
       return result
 
-  def _assemble_final_output(self, paper_dir: Path) -> str:
-      """Read the primary artifact and return it as the final output."""
+  def _assemble_final_output(
+      self,
+      paper_dir: Path,
+      task: str = "",
+      artifacts: Optional[dict[str, Any]] = None,
+  ) -> str:
+      """Return a task-appropriate answer from the primary artifact."""
+      task_lower = (task or "").lower()
+      wants_pptx = any(k in task_lower for k in ("ppt", "pptx", "presentation", "slides"))
+      wants_report = any(k in task_lower for k in ("report", "报告", "解读报告"))
+
+      slide_path = self._artifact_path(artifacts, "slide_artifact")
+      if wants_pptx:
+          if slide_path:
+              return (
+                  "PPT 已生成完成。\n\n"
+                  f"- 文件：{slide_path}\n"
+                  f"- 下载链接：/api/download?path={slide_path}\n"
+                  "你可以在浏览器中打开下载链接查看演示文稿。"
+              )
+          return (
+              "[生成未完成] PPT 文件没有创建成功。"
+              "请查看轨迹中的最后失败节点；本次不会用旧报告或原始 JSON 冒充 PPT 结果。"
+          )
+
       candidates = [
           paper_dir / "report" / "report.md",
           paper_dir / "output" / "report.md",
@@ -1126,6 +1193,12 @@ class SmartOrchestrator:
           if path.exists():
               return path.read_text(encoding="utf-8", errors="replace")
 
+      if wants_report:
+          return (
+              "[生成未完成] report/report.md 没有创建成功。"
+              "请查看轨迹中的最后失败节点；本次不会用原始 JSON 冒充报告结果。"
+          )
+
       # Fallback: concat facts + verified
       parts = []
       for name in ("facts.json", "verified.json"):
@@ -1133,6 +1206,23 @@ class SmartOrchestrator:
           if path.exists():
               parts.append(f"--- {name} ---\n" + path.read_text(encoding="utf-8", errors="replace"))
       return "\n\n".join(parts) if parts else "[No output artifact generated]"
+
+  @staticmethod
+  def _artifact_path(
+      artifacts: Optional[dict[str, Any]],
+      key: str,
+      fallback: Optional[Path] = None,
+  ) -> Optional[Path]:
+      """Get a concrete path from a saved artifact, falling back when it exists."""
+      value = (artifacts or {}).get(key)
+      path = getattr(value, "path", None)
+      if path:
+          candidate = Path(path)
+          if candidate.exists():
+              return candidate
+      if fallback and fallback.exists():
+          return fallback
+      return None
 
   def _write_status(self, paper_dir: Path, key: str, message: str) -> None:
       status_path = paper_dir / "orchestration_status.json"
