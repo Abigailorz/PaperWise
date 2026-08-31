@@ -626,6 +626,22 @@ DAG 收尾自动生成假设并写入 `research_state.hypotheses`。
 
 新增 11 个测试全部通过；全量回归 264/269（5 个为环境文件锁问题）。
 
+### P6 Phase D：Research Narrative Output Layer ✅（2026-08-31）
+
+新增 `src/paperwise/generators/narrative.py`。`ResearchNarrative.build()`
+将 Research State、Evidence Pack 和 facts.json 聚合为结构化研究叙事，
+Report 和 PPT 作为同一叙事的两个投影（而非独立管线）。DAG 收尾自动
+构建 `research_narrative.json`，报告 writer 以其为首要输入源。
+`to_prompt_context()` 生成紧凑的 writer prompt 上下文。
+
+**LangSplat P6 专项评测 PASS**：
+
+- Evidence → Opportunity → Graph → Narrative 全链路贯通
+- 3 条机会全部带证据且 pending；图谱 19 节点 / 18 边
+- Narrative 结构正确序列化到 `research_narrative.json`
+
+新增 5 个 Narrative 测试全部通过；全量回归 269/274（5 个为环境文件锁问题）。
+
 
 ### P6：Multi-Agent Collaboration ⭐⭐⭐
 
