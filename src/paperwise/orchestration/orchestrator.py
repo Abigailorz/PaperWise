@@ -32,6 +32,7 @@ from paperwise.opportunity.action_planner import ActionPlanner
 from paperwise.opportunity.surfacer import OpportunitySurfacer
 from paperwise.opportunity.models import OpportunityType, ResearchOpportunity
 from paperwise.opportunity.hypothesis_engine import HypothesisEngine
+from paperwise.generators.narrative import ResearchNarrative
 from paperwise.research_graph import ResearchGraphBuilder, ResearchGraphStore
 from paperwise.research_graph.query import ResearchGraphQuery
 from paperwise.research_graph.models import EntityType, RelationType
@@ -406,6 +407,12 @@ class SmartOrchestrator:
           graph = self.research_graph_builder.build(research_state, evidence_packs, facts)
           self.research_graph_store.merge(graph)
           graph.save(paper_dir / "research_graph.json")
+          narrative = ResearchNarrative.build(
+              research_state,
+              evidence_packs[0] if evidence_packs else None,
+              facts,
+          )
+          narrative.save(paper_dir / "research_narrative.json")
           self._write_status(paper_dir, "research_graph", graph.stats())
       except Exception:
           # 机会检测不应阻塞主流程
@@ -871,10 +878,11 @@ class SmartOrchestrator:
           task_template=(
               f"Write a comprehensive answer for the task: {task}\n\n"
               f"Based on the paper at {paper_dir}.\n\n"
-              "1. Read facts.json and verified.json (if they exist).\n"
-              "2. If generating a report, write report/sections/*.md and assemble report/report.md.\n"
-              "3. If generating slides, use skill_load nature-paper2ppt when appropriate, else generate_pptx.\n"
-              "4. Cite sources as [source: text.md Lxxx-Lyyy]."
+              "1. Read facts.json, verified.json, and research_narrative.json (if they exist).\n"
+              "2. Use research_narrative.json as the primary source for findings, hypotheses, and evidence structure.\n"
+              "3. If generating a report, write report/sections/*.md and assemble report/report.md.\n"
+              "4. If generating slides, use skill_load nature-paper2ppt when appropriate, else generate_pptx.\n"
+              "5. Cite sources as [source: text.md Lxxx-Lyyy]."
           ),
           allowed_tools=allowed,
           output_path="report/report.md",
