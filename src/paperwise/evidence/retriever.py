@@ -120,46 +120,29 @@ class EvidenceRetriever:
         paper_id = Path(paper_dir).name if paper_dir else None
         queries = self._expanded_queries(query)
         seen: dict[str, EvidenceSnippet] = {}
+        used_fallback = False
 
         for retrieval_query in queries:
-            if scope == "current_paper" and not paper_id:
-                break
-            filters: dict = {"paper_id": paper_id} if paper_id and scope == "current_paper" else {}
-            candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 2, filters=filters)
-            used_fallback = bool(candidates and filters)
-            if not candidates and scope == "current_paper" and filters:
-                candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 2)
-                used_fallback = bool(candidates)
-            for chunk in candidates:
-                metadata = dict(chunk.metadata or {})
-                if metadata.get("structure_type") in {"paper_section", None}:
-                    structure_type = StructureType.SECTION
-                else:
-                    try:
-                        structure_type = StructureType(metadata["structure_type"])
-                    except (KeyError, ValueError):
-                        structure_type = StructureType.SECTION
-                if structure_types and structure_type not in structure_types:
-                    continue
-                start_line = int(metadata.get("start_line", 0) or 0)
-                end_line = int(metadata.get("end_line", 0) or 0)
-                snippet = EvidenceSnippet(
-                    evidence_id=str(metadata.get("doc_id") or chunk.id),
-                    content=chunk.content,
-                    structure_type=structure_type,
-                    paper_id=str(metadata.get("paper_id", chunk.doc_id)),
-                    section=str(metadata.get("section", "")),
-                    start_line=start_line,
-                    end_line=end_line,
-                    page=int(metadata.get("page", 0) or 0),
-                    location=str(metadata.get("source_path", metadata.get("location", ""))),
-                    metadata={k: v for k, v in metadata.items() if k not in {"embedding"}},
-                )
-                previous = seen.get(snippet.evidence_id)
-                if previous is None:
-                    seen[snippet.evidence_id] = snippet
+            if scope == "current_paper":
+                if not paper_id:
+                    break
+                filters: dict = {"paper_id": paper_id}
+                candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 2, filters=filters)
+                used_fallback = bool(candidates and filters)
+                if not candidates and filters:
+                    candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 2)
+                    used_fallback = bool(candidates)
+                for chunk in candidates:
+                    self._ingest_chunk(chunk, seen, structure_types)
+            elif scope in ("cross_paper", "library"):
+                # P9.1: query the KB without paper filter; metadata paper_id
+                # already tags each chunk's source paper.
+                candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 4)
+                for chunk in candidates:
+                    self._ingest_chunk(chunk, seen, structure_types)
 
         snippets = list(seen.values())
+        papers_covered = sorted({s.paper_id for s in snippets})
         if self.reranker:
             snippets = self.reranker(query, snippets)
         else:
@@ -188,9 +171,44 @@ class EvidenceRetriever:
             query=query,
             snippets=snippets[:top_k],
             scope=scope,
+            papers_covered=papers_covered,
             retrieval_queries=queries,
             low_recall=low_recall,
         )
+
+    def _ingest_chunk(
+        self,
+        chunk: Chunk,
+        seen: dict[str, EvidenceSnippet],
+        structure_types: Optional[Iterable[StructureType]] = None,
+        paper_title: str = "",
+    ) -> None:
+        """Convert a KB chunk into an EvidenceSnippet and store it by ID."""
+        metadata = dict(chunk.metadata or {})
+        if metadata.get("structure_type") in {"paper_section", None}:
+            structure_type = StructureType.SECTION
+        else:
+            try:
+                structure_type = StructureType(metadata["structure_type"])
+            except (KeyError, ValueError):
+                structure_type = StructureType.SECTION
+        if structure_types and structure_type not in structure_types:
+            return
+        snippet = EvidenceSnippet(
+            evidence_id=str(metadata.get("doc_id") or chunk.id),
+            content=chunk.content,
+            structure_type=structure_type,
+            paper_id=str(metadata.get("paper_id", chunk.doc_id)),
+            paper_title=paper_title or str(metadata.get("paper_id", "")),
+            section=str(metadata.get("section", "")),
+            start_line=int(metadata.get("start_line", 0) or 0),
+            end_line=int(metadata.get("end_line", 0) or 0),
+            page=int(metadata.get("page", 0) or 0),
+            location=str(metadata.get("source_path", metadata.get("location", ""))),
+            metadata={k: v for k, v in metadata.items() if k not in {"embedding"}},
+        )
+        if snippet.evidence_id not in seen:
+            seen[snippet.evidence_id] = snippet
 
     def _expanded_queries(self, query: str) -> list[str]:
         base = query.strip()

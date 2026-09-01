@@ -240,17 +240,52 @@ class SmartOrchestrator:
       # P6 Phase B: Graph 驱动 Planner——查询持久图谱中的 gap，转为下一轮机会
       graph_opps = []
       try:
-          persisted_graph = self.research_graph_store.load()
-          if persisted_graph and persisted_graph.nodes:
-              query = ResearchGraphQuery(persisted_graph)
-              for opp_node in query.find_research_gaps():
-                  graph_opps.append(ResearchOpportunity(
+            persisted_graph = self.research_graph_store.load()
+            if persisted_graph and persisted_graph.nodes:
+                query = ResearchGraphQuery(persisted_graph)
+                for opp_node in query.find_research_gaps():
+                    graph_opps.append(ResearchOpportunity(
                       type=OpportunityType.KNOWLEDGE_GAP,
                       title=opp_node.label,
                       description=opp_node.description or "Research graph gap",
-                      confidence=max(opp_node.confidence, 0.5),
-                      importance=0.7,
-                  ))
+                        confidence=max(opp_node.confidence, 0.5),
+                        importance=0.7,
+                    ))
+                # P9.3: Cross-paper graph queries → research opportunities
+                for pair in query.find_cross_paper_relationships():
+                    graph_opps.append(ResearchOpportunity(
+                        type=OpportunityType.KNOWLEDGE_GAP,
+                        title=f"跨论文方法比较：{pair.node_a.label[:40]} × {pair.node_b.label[:40]}",
+                        description=(
+                            f"论文 {pair.paper_a} 的方法 {pair.node_a.label} 与"
+                            f"论文 {pair.paper_b} 的方法 {pair.node_b.label} 共享技术元素"
+                            f"（{', '.join(pair.shared_tokens[:5])}），可进行方法比较"
+                        ),
+                        confidence=pair.confidence,
+                        importance=0.6,
+                        related_entities=[pair.node_a.label, pair.node_b.label],
+                    ))
+                for hub in query.find_contradiction_hubs():
+                    graph_opps.append(ResearchOpportunity(
+                        type=OpportunityType.CONTRADICTION,
+                        title=f"跨论文矛盾：{hub.label[:50]}",
+                        description=hub.description or f"Claim {hub.label} has cross-paper contradiction edges",
+                        confidence=max(hub.confidence, 0.6),
+                        importance=0.8,
+                        related_entities=[hub.label],
+                    ))
+                for pair in query.find_complementarity_pairs():
+                    graph_opps.append(ResearchOpportunity(
+                        type=OpportunityType.METHOD_COMPLEMENTARITY,
+                        title=f"跨论文互补：{pair.node_a.label[:30]} + {pair.node_b.label[:30]}",
+                        description=(
+                            f"论文 {pair.paper_a} 的方法 {pair.node_a.label} 与"
+                            f"论文 {pair.paper_b} 的方法 {pair.node_b.label} 可能互补"
+                        ),
+                        confidence=pair.confidence,
+                        importance=0.7,
+                        related_entities=[pair.node_a.label, pair.node_b.label],
+                    ))
       except Exception:
           graph_opps = []
 

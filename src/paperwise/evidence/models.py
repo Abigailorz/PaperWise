@@ -17,6 +17,13 @@ class StructureType(str, Enum):
     REFERENCE = "reference"
 
 
+class EvidenceScope(str, Enum):
+    """P9.1 — Retrieval scope: single paper or cross-paper library."""
+
+    CURRENT_PAPER = "current_paper"
+    CROSS_PAPER = "cross_paper"
+
+
 @dataclass
 class EvidenceSnippet:
     """A retrievable, citable piece of paper structure."""
@@ -25,6 +32,7 @@ class EvidenceSnippet:
     content: str
     structure_type: StructureType
     paper_id: str
+    paper_title: str = ""
     section: str = ""
     start_line: int = 0
     end_line: int = 0
@@ -59,6 +67,7 @@ class EvidencePack:
     query: str
     snippets: list[EvidenceSnippet] = field(default_factory=list)
     scope: str = "current_paper"
+    papers_covered: list[str] = field(default_factory=list)
     retrieval_queries: list[str] = field(default_factory=list)
     low_recall: bool = False
 
@@ -86,6 +95,7 @@ class EvidencePack:
         return {
             "query": self.query,
             "scope": self.scope,
+            "papers_covered": self.papers_covered,
             "retrieval_queries": self.retrieval_queries,
             "low_recall": self.low_recall,
             "snippets": [s.to_dict() for s in self.snippets],
@@ -96,6 +106,7 @@ class EvidencePack:
         return cls(
             query=data.get("query", ""),
             scope=data.get("scope", "current_paper"),
+            papers_covered=data.get("papers_covered", []),
             retrieval_queries=data.get("retrieval_queries", []),
             low_recall=data.get("low_recall", False),
             snippets=[EvidenceSnippet.from_dict(s) for s in data.get("snippets", [])],

@@ -30,6 +30,17 @@ class NarrativeSection:
 
 
 @dataclass
+class CrossPaperNarrativeSection:
+    """P9.4 — A cross-paper section derived from multi-paper analysis."""
+
+    section_type: str = ""   # method_comparison | contradictions | complementarity | research_gaps
+    title: str = ""
+    content: str = ""
+    source_papers: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ResearchNarrative:
     """Aggregated research state for output generation."""
 
@@ -44,6 +55,7 @@ class ResearchNarrative:
     actions_summary: list[dict[str, Any]] = field(default_factory=list)
     evidence_snippets: list[dict[str, Any]] = field(default_factory=list)
     facts: dict[str, Any] = field(default_factory=dict)
+    cross_paper_sections: list[CrossPaperNarrativeSection] = field(default_factory=list)
 
     @classmethod
     def build(
@@ -110,6 +122,28 @@ class ResearchNarrative:
                 citation=finding.evidence[:100] if finding.evidence else "",
                 confidence=finding.confidence,
             ))
+
+        # P9.4: Build cross-paper sections from cross-paper opportunities.
+        cross_paper_opps = [
+            o for o in research_state.opportunities
+            if any("跨论文" in o.title or "cross" in o.title.lower() for _ in [1])
+        ]
+        for opp in cross_paper_opps:
+            section_type = {
+                "knowledge_gap": "method_comparison",
+                "contradiction": "contradictions",
+                "method_complementarity": "complementarity",
+            }.get(opp.type.value, "research_gaps")
+            source_papers = [
+                e.location for e in opp.evidence if e.location
+            ]
+            narrative.cross_paper_sections.append(CrossPaperNarrativeSection(
+                section_type=section_type,
+                title=opp.title,
+                content=opp.description,
+                source_papers=list(dict.fromkeys(source_papers)),
+                evidence_refs=[e.source_id for e in opp.evidence],
+            ))
         return narrative
 
     def save(self, path: Path) -> None:
@@ -125,6 +159,10 @@ class ResearchNarrative:
         kwargs = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         if kwargs.get("sections"):
             kwargs["sections"] = [NarrativeSection(**s) for s in kwargs["sections"]]
+        if kwargs.get("cross_paper_sections"):
+            kwargs["cross_paper_sections"] = [
+                CrossPaperNarrativeSection(**s) for s in kwargs["cross_paper_sections"]
+            ]
         return cls(**kwargs)
 
     def to_prompt_context(self, max_chars: int = 4000) -> str:
@@ -150,6 +188,12 @@ class ResearchNarrative:
             lines.append("\n## Open Opportunities")
             for o in self.opportunities_summary[:3]:
                 lines.append(f"- [{o['type']}] {o['title']}")
+        if self.cross_paper_sections:
+            lines.append("\n## Cross-Paper Analysis")
+            for cs in self.cross_paper_sections[:5]:
+                lines.append(f"- [{cs.section_type}] {cs.title}")
+                if cs.source_papers:
+                    lines.append(f"  papers: {', '.join(cs.source_papers[:3])}")
         if self.evidence_snippets:
             lines.append("\n## Evidence")
             for e in self.evidence_snippets[:3]:

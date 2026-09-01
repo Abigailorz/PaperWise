@@ -29,6 +29,16 @@ CONTRADICTION_MARKERS = (
     "相反", "矛盾", "不一致", "冲突", "相悖",
 )
 
+# P9.2 — Cross-paper contradiction detection keyword pairs.
+CROSS_PAPER_POSITIVE_MARKERS = (
+    "improves", "outperforms", "significant", "better", "superior",
+    "state-of-the-art", "highest", "best", "advantage",
+)
+CROSS_PAPER_NEGATIVE_MARKERS = (
+    "no improvement", "does not outperform", "no significant", "worse",
+    "degrades", "fails", "underperforms", "lower", "not better",
+)
+
 
 class DetectionRule(Protocol):
     """一条机会检测规则。"""
@@ -240,10 +250,264 @@ class MethodComplementarityRule:
         return {t for t in tokens if t not in stopwords}
 
 
-#: Phase 1 启用的规则集
+class CrossPaperMethodComparisonRule:
+    """P9.2 — Detect comparable methods across papers sharing evaluation metrics.
+
+    Input: research_state.related_papers (≥ 2 papers) + current paper methods.
+    Output: KNOWLEDGE_GAP opportunities tagged as cross-paper comparisons.
+    """
+
+    opportunity_type = OpportunityType.KNOWLEDGE_GAP
+
+    def apply(self, research_state, reviewer_findings):
+        opportunities: list[ResearchOpportunity] = []
+        papers = research_state.related_papers or []
+        if len(papers) < 1:
+            return opportunities
+
+        current_methods = self._extract_methods(research_state)
+        if not current_methods:
+            return opportunities
+
+        topic_tokens = self._topic_tokens(research_state.current_task)
+        for paper in papers:
+            if not paper or paper == research_state.current_paper:
+                continue
+            paper_tokens = self._topic_tokens(paper)
+            shared_metrics = topic_tokens & paper_tokens
+            if len(shared_metrics) < 2:
+                continue
+            for method in current_methods:
+                confidence = min(1.0, len(shared_metrics) / 3.0)
+                if confidence < 0.5:
+                    continue
+                opportunities.append(ResearchOpportunity(
+                    type=self.opportunity_type,
+                    title=f"跨论文方法比较：{method[:40]} × {paper[:40]}",
+                    description=(
+                        f"当前论文方法 {method} 与相关论文 {paper} 共享评估指标"
+                        f"（{', '.join(sorted(shared_metrics))}），可进行方法比较"
+                    ),
+                    evidence=[
+                        EvidenceRef(
+                            source_type="finding",
+                            source_id=f"method:{method[:40]}",
+                            excerpt=method,
+                            location=research_state.current_paper or "",
+                        ),
+                        EvidenceRef(
+                            source_type="paper_section",
+                            source_id=paper,
+                            excerpt=f"shared metrics: {', '.join(sorted(shared_metrics))}",
+                            location=paper,
+                        ),
+                    ],
+                    related_entities=[method, paper],
+                    confidence=confidence,
+                    suggested_actions=["compare_methods", "retrieve_evidence"],
+                ))
+        return opportunities
+
+    @staticmethod
+    def _extract_methods(research_state) -> list[str]:
+        methods = []
+        for finding in research_state.findings:
+            if "method" in finding.node_id.lower() and finding.claim:
+                methods.append(finding.claim[:80])
+        return methods
+
+    @staticmethod
+    def _topic_tokens(text: str) -> set[str]:
+        import re
+        tokens = re.findall(r"[a-zA-Z]{4,}", (text or "").lower())
+        stopwords = {"this", "that", "with", "from", "paper", "using", "based"}
+        return {t for t in tokens if t not in stopwords}
+
+
+class CrossPaperContradictionRule:
+    """P9.2 — Detect contradictory claims about the same entity across papers.
+
+    Deterministic keyword-pair matching: positive markers in one paper's
+    evidence + negative markers in another paper's evidence about the same entity.
+    """
+
+    opportunity_type = OpportunityType.CONTRADICTION
+
+    def apply(self, research_state, reviewer_findings):
+        opportunities: list[ResearchOpportunity] = []
+        papers = research_state.related_papers or []
+        if len(papers) < 1:
+            return opportunities
+
+        # Extract claims from research_state.findings and flagged claims.
+        all_claims: list[dict] = []
+        for finding in research_state.findings:
+            if finding.claim:
+                all_claims.append({
+                    "claim": finding.claim,
+                    "evidence": finding.evidence or "",
+                    "paper": research_state.current_paper or "",
+                })
+        flagged = (reviewer_findings or {}).get("flagged_claims", []) or []
+        for claim in flagged:
+            if isinstance(claim, dict) and claim.get("quote"):
+                all_claims.append({
+                    "claim": claim["quote"],
+                    "evidence": claim.get("evidence", ""),
+                    "paper": research_state.current_paper or "",
+                })
+
+        # Group claims by shared entity token, then check for opposing sentiment.
+        for i, claim_a in enumerate(all_claims):
+            for j, claim_b in enumerate(all_claims):
+                if j <= i:
+                    continue
+                entity_overlap = self._entity_overlap(claim_a["claim"], claim_b["claim"])
+                if not entity_overlap:
+                    continue
+                sentiment_a = self._sentiment(claim_a["evidence"] or claim_a["claim"])
+                sentiment_b = self._sentiment(claim_b["evidence"] or claim_b["claim"])
+                if sentiment_a == sentiment_b or sentiment_a == "neutral" or sentiment_b == "neutral":
+                    continue
+                confidence = 0.7  # keyword-pair contradiction
+                opportunities.append(ResearchOpportunity(
+                    type=self.opportunity_type,
+                    title=f"跨论文矛盾：{entity_overlap[:50]}",
+                    description=(
+                        f"论文间关于 {entity_overlap} 的说法可能矛盾：\n"
+                        f"论文A: {claim_a['claim'][:100]}\n"
+                        f"论文B: {claim_b['claim'][:100]}"
+                    ),
+                    evidence=[
+                        EvidenceRef(
+                            source_type="finding",
+                            source_id=f"claim_a[{i}]",
+                            excerpt=(claim_a["evidence"] or claim_a["claim"])[:200],
+                            location=claim_a["paper"],
+                        ),
+                        EvidenceRef(
+                            source_type="finding",
+                            source_id=f"claim_b[{j}]",
+                            excerpt=(claim_b["evidence"] or claim_b["claim"])[:200],
+                            location=claim_b["paper"],
+                        ),
+                    ],
+                    related_entities=[entity_overlap],
+                    confidence=confidence,
+                    suggested_actions=["compare_evidence", "verify_claim"],
+                ))
+        return opportunities
+
+    @staticmethod
+    def _entity_overlap(claim_a: str, claim_b: str) -> str:
+        """Find the longest shared entity token between two claims."""
+        import re
+        tokens_a = set(re.findall(r"[A-Za-z][A-Za-z\-]{2,}", claim_a.lower()))
+        tokens_b = set(re.findall(r"[A-Za-z][A-Za-z\-]{2,}", claim_b.lower()))
+        overlap = tokens_a & tokens_b - {"this", "that", "the", "with", "from", "paper", "using", "based", "method", "approach"}
+        return sorted(overlap, key=len, reverse=True)[0] if overlap else ""
+
+    @staticmethod
+    def _sentiment(text: str) -> str:
+        """Classify evidence text as positive / negative / neutral."""
+        text_lower = (text or "").lower()
+        has_positive = any(m in text_lower for m in CROSS_PAPER_POSITIVE_MARKERS)
+        has_negative = any(m in text_lower for m in CROSS_PAPER_NEGATIVE_MARKERS)
+        if has_positive and not has_negative:
+            return "positive"
+        if has_negative and not has_positive:
+            return "negative"
+        return "neutral"
+
+
+class CrossPaperComplementarityRule:
+    """P9.2 — Detect complementary methods across papers addressing different dimensions.
+
+    Two papers share base technique tokens but address different problem
+    dimensions → potential combination direction.
+    """
+
+    opportunity_type = OpportunityType.METHOD_COMPLEMENTARITY
+
+    def apply(self, research_state, reviewer_findings):
+        opportunities: list[ResearchOpportunity] = []
+        papers = research_state.related_papers or []
+        if len(papers) < 1:
+            return opportunities
+
+        current_methods = CrossPaperMethodComparisonRule._extract_methods(research_state)
+        if not current_methods:
+            return opportunities
+
+        current_dims = self._dimension_tokens(research_state.current_task)
+        for paper in papers:
+            if not paper or paper == research_state.current_paper:
+                continue
+            paper_dims = self._dimension_tokens(paper)
+            disjoint_dims = current_dims - paper_dims
+            shared_dims = current_dims & paper_dims
+            if not disjoint_dims or not shared_dims:
+                continue
+            for method in current_methods:
+                method_tokens = CrossPaperMethodComparisonRule._topic_tokens(method)
+                paper_method_tokens = CrossPaperMethodComparisonRule._topic_tokens(paper)
+                shared_technique = method_tokens & paper_method_tokens
+                if len(shared_technique) < 1:
+                    continue
+                confidence = min(1.0, len(shared_technique) / 3.0)
+                if confidence < 0.5:
+                    continue
+                dim_a = sorted(disjoint_dims)[0]
+                dim_b = sorted(shared_dims)[0]
+                opportunities.append(ResearchOpportunity(
+                    type=self.opportunity_type,
+                    title=f"跨论文互补：{method[:30]} ({dim_a}) + {paper[:30]} ({dim_b})",
+                    description=(
+                        f"论文A方法 {method} 解决 {dim_a} 维度，"
+                        f"论文B {paper} 解决 {dim_b} 维度，共享技术"
+                        f"（{', '.join(sorted(shared_technique))}），可能存在互补组合方向"
+                    ),
+                    evidence=[
+                        EvidenceRef(
+                            source_type="finding",
+                            source_id=f"method:{method[:40]}",
+                            excerpt=method,
+                            location=research_state.current_paper or "",
+                        ),
+                        EvidenceRef(
+                            source_type="paper_section",
+                            source_id=paper,
+                            excerpt=f"dimensions: {dim_b}",
+                            location=paper,
+                        ),
+                    ],
+                    related_entities=[method, paper],
+                    confidence=confidence,
+                    suggested_actions=["compare_methods", "suggest_experiment"],
+                ))
+        return opportunities
+
+    @staticmethod
+    def _dimension_tokens(text: str) -> set[str]:
+        """Extract dimension-related tokens from task/paper description."""
+        import re
+        dimension_words = {
+            "geometry", "geometric", "accuracy", "semantic", "appearance",
+            "quality", "speed", "efficiency", "memory", "robustness",
+            "generalization", "consistency", "resolution", "detail",
+            "training", "inference", "rendering", "reconstruction",
+        }
+        tokens = set(re.findall(r"[a-zA-Z]{4,}", (text or "").lower()))
+        return tokens & dimension_words
+
+
+#: P9 启用的完整规则集（含跨论文规则）
 DEFAULT_RULES: list[DetectionRule] = [
     KnowledgeGapRule(),
     MissingEvidenceRule(),
     ContradictionRule(),
     MethodComplementarityRule(),
+    CrossPaperMethodComparisonRule(),
+    CrossPaperContradictionRule(),
+    CrossPaperComplementarityRule(),
 ]
