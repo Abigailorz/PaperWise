@@ -1,6 +1,6 @@
-# PaperWise 交接文档 — P8 完成状态与新窗口工作指引
+# PaperWise 交接文档 — P8 完成状态与 P9 规划指引
 
-> 生成时间：2026-08-31 · 用途：新会话/新窗口接手时恢复完整上下文。
+> 生成时间：2026-08-31 · 更新时间：2026-09-01 · 用途：新会话/新窗口接手时恢复完整上下文。
 > 读完本文即可继续工作，无需翻阅旧对话。本文依据对代码库的逐项核实写成，
 > 已修正此前交接摘要中的过时信息（见 §2.1）。
 
@@ -101,7 +101,52 @@ Research Graph → Research Questions → Question Prioritization
   research loop 端到端验证（1 问题 → 2 行动 → partially_resolved）
 - **尚未做**：开启行动的 P8 全量评测（见 §5 待办 1）
 
-## 5. 待办事项（新窗口按序执行）
+## 5. P9 规划（当前活跃工作）
+
+P9 是最后一个功能大版本，完成后项目冻结。
+完整技术 Spec 见 `docs/P9-CROSS-PAPER-SPEC.md`。
+
+### 5.1 P9 核心目标
+
+从单篇论文分析升级为跨论文研究智能：
+
+```text
+P9.1 Cross-Paper Evidence  — EvidenceRetriever 支持 scope="cross_paper"
+P9.2 Cross-Paper Rules     — 3 条确定性规则（比较/矛盾/互补）
+P9.3 Graph Reverse-Driven  — ResearchGraphQuery 反向驱动 Research Loop
+P9.4 Narrative + Report + PPT — 跨论文章节与幻灯片
+P9.5 Final Benchmark       — 4 类评测（单论文/证据/跨论文/Research Loop）
+```
+
+### 5.2 P9 实现顺序
+
+```text
+Step 1: P9.1 Cross-Paper Evidence
+Step 2: P9.2 Cross-Paper Rules
+Step 3: P9.3 Graph Queries
+Step 4: Integration (orchestrator + research_state)
+Step 5: P9.4 Narrative/Report/PPT
+Step 6: P9.5 Benchmark
+Step 7: Full regression + real-paper validation
+Step 8: Tag v0.6.0-p9-research-native + project freeze
+```
+
+### 5.3 P9 硬性约束
+
+- ❌ 不新增 Agent 类别
+- ❌ 不新增 Memory 层
+- ❌ 不重写 Dynamic DAG
+- ❌ 不做 P10/P11（Self-improvement / 自动实验 = Future Work）
+
+### 5.4 P9 验收核心标准
+
+1. 跨论文检索：EvidencePack 包含 ≥ 2 篇论文的 snippets
+2. 确定性规则：3 条规则全部纯代码，不调 LLM
+3. Graph 反向驱动：Research Loop 的行动计划受 graph gap/contradiction/complementarity 影响
+4. Research Loop Benchmark：证明 state 变化 → 不同行动决策
+5. 最终输出：Report + PPT 能回答 8 个研究级问题（见 P9 spec §6.1）
+
+## 6. 待办事项（新窗口按序执行）
 
 1. **P8 全量评测（含行动）**：
    `P8_ACTIONS=1 python workspace/langsplat/eval_langsplat.py --actions`
@@ -115,9 +160,8 @@ Research Graph → Research Questions → Question Prioritization
      `reasoning_delta` 事件，前端只进思考面板。
    - 复测步骤：杀掉旧服务进程 → 重启 → 上传 PDF → 生成报告，
      确认无 JSON 错误、推理内容只出现在思考面板。
-3. **P9 规划**（下一大版本）：Cross-Paper Research + Research Graph
-   Intelligence — 从单篇分析升级为研究领域分析（跨论文证据、方法关系、
-   矛盾与研究空白）。按用户流程：先写 spec 规划，再实现。
+3. **P9 实现**：按 `docs/P9-CROSS-PAPER-SPEC.md` 的 8 步顺序执行。
+   �步完成后跑定向测试，全部完成后跑一次全量回归。
 4. 若本轮有代码改动：先跑定向测试，**全部改完后只跑一次**全量回归
    （用户明确要求尽量少跑全量）。
 
@@ -155,13 +199,41 @@ Research Graph → Research Questions → Question Prioritization
 | `tests/test_memory/test_p7_decision.py` | P7 测试（3 个） |
 | `workspace/langsplat/eval_langsplat.py` | LangSplat 全量评测脚本（gitignored，支持 `--actions`） |
 
-## 9. 后续路线图（用户已确认的方向）
+## 9. 版本控制规范（已统一）
+
+### Tag 规范
 
 ```text
-P8  Research Loop            ✅ 已完成
-P9  Cross-Paper Research     ← 下一站：跨论文证据、方法关系、矛盾与空白
-P10 Self-Improving Agent     StrategyLibrary 用长期 benchmark 证明经验价值
-P11 Research-native Agent    提出假设、设计验证方案、组织实验
+v{major}.{minor}.{patch}-{phase}-{description}
+```
+
+当前已有 tag：
+- `v0.5.0-p8-research-loop` — P8 Research Loop 完成
+
+下一个 tag：
+- `v0.6.0-p9-research-native` — P9 完成 + 项目冻结
+
+### 分支策略
+
+- 单分支 `main`，P 级工作直接提交
+- 每个 P 阶段完成时打 tag
+- P9 完成后冻结架构，仅修复 bug 和更新文档
+
+### Commit 规范
+
+```text
+P{N}: {action} {description}    ← 功能
+fix: {description}              ← 修复
+docs: {description}             ← 文档
+```
+
+## 10. 后续路线图（已确认并冻结）
+
+```text
+P8  Research Loop            ✅ 已完成（v0.5.0-p8-research-loop）
+P9  Cross-Paper Research     ← 当前活跃（docs/P9-CROSS-PAPER-SPEC.md）
+P10/P11                      ❌ 已取消 — Future Work only
+Project Freeze               ← P9 完成后
 ```
 
 原则：P0–P8 架构已闭环，**不再横向堆模块**；后续以"研究智能闭环验证"为主线。
