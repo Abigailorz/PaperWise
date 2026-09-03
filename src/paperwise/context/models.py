@@ -16,10 +16,12 @@ class BudgetPlan:
     total_tokens: int
     allocations: dict[str, int]
     reserve_tokens: int
+    task_type: str = "general"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "total_tokens": self.total_tokens,
+            "task_type": self.task_type,
             "allocations": dict(self.allocations),
             "reserve_tokens": self.reserve_tokens,
         }

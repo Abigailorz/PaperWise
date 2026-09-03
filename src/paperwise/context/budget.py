@@ -21,17 +21,40 @@ class BudgetManager:
     }
     RESERVE_RATIO = 0.05
 
-    def allocate(self, total_tokens: int) -> BudgetPlan:
+    TASK_PROFILES = {
+        "general": RATIOS,
+        "question": {
+            **RATIOS,
+            "knowledge": 0.25,
+            "recent_turns": 0.25,
+        },
+        "report": {
+            **RATIOS,
+            "memory": 0.05,
+            "knowledge": 0.35,
+            "session_summary": 0.05,
+            "recent_turns": 0.25,
+        },
+        "research_loop": {
+            **RATIOS,
+            "knowledge": 0.35,
+            "recent_turns": 0.15,
+        },
+    }
+
+    def allocate(self, total_tokens: int, task_type: str = "general") -> BudgetPlan:
         total_tokens = max(int(total_tokens), 0)
         reserve = int(total_tokens * self.RESERVE_RATIO)
         budgeted = max(total_tokens - reserve, 0)
+        ratios = self.TASK_PROFILES.get(task_type, self.RATIOS)
         allocations = {
             partition: int(budgeted * ratio)
-            for partition, ratio in self.RATIOS.items()
+            for partition, ratio in ratios.items()
             if ratio > 0
         }
         return BudgetPlan(
             total_tokens=total_tokens,
+            task_type=task_type,
             allocations=allocations,
             reserve_tokens=reserve,
         )

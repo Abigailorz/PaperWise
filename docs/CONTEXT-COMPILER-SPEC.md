@@ -15,8 +15,8 @@
 | C1 | Context Compiler + Execution State | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
 | C2 | Incremental Session Memory | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
 | C3 | User Memory Candidate Pipeline | 已落地 | `v0.8.0-memory-pipeline` | 本轮实施提交 |
-| E1 | Selective Activation（扩展点） | 未排期 | — | — |
-| E2 | 统一动态预算分配（扩展点） | 未排期 | — | — |
+| E1 | Selective Activation | 已落地 | `v0.9.0-context-activation` | 本轮实施提交 |
+| E2 | 统一动态预算分配 | 已落地 | `v0.9.0-context-activation` | 本轮实施提交 |
 
 状态取值：`未开始 / spec ready / 实施中 / 已落地 / 已调整`。  
 规则：每阶段完成必须回填本表并在附录 A 追加决策记录，否则视为未冻结。
@@ -236,6 +236,26 @@ C1 采用静态比例（落地时按实测调整）：
 E2（扩展点）：按任务类型（问答 / 报告 / 研究循环）动态倾斜；预算分配
 本身写入 trace，便于消融实验。
 
+E2 落地策略：
+
+- `BudgetManager` 维护 `question / report / research_loop` 三个任务档案。
+- `ContextCompiler` 默认根据 query 词法推断任务类型；显式 `task_type`
+  仍可覆盖。
+- `BudgetPlan.task_type` 与完整 allocations 进入 `CONTEXT_ASSEMBLED`
+  trace，便于后续消融。
+
+## 6.1 Selective Activation（E1）
+
+`ContextCompiler.compile()` 在装配前对 memory 与 knowledge 候选做确定性
+激活：
+
+- 按 query 与候选文本的词法重叠、item importance、confidence 计分。
+- 输出保留原列表顺序，保证序列化与消息渲染稳定。
+- Memory 采用严格激活：已有至少一条命中时，零重叠候选不进入本轮。
+- Knowledge 采用排序激活：零重叠候选仍保留，避免论文知识因 query 表述
+  差异被误删。
+- 若所有候选都零重叠，则退化为按原顺序截断，避免首轮空记忆造成冷启动。
+
 ---
 
 ## 7. 非目标
@@ -272,3 +292,5 @@ E2（扩展点）：按任务类型（问答 / 报告 / 研究循环）动态倾
 | 2026-09-03 | DAG 节点失败/超时也计入节点与全局预算 | 回归发现失败重试路径未扣预算，可能导致无限 replan；该修复是 C 系列回归的一部分 |
 | 2026-09-03 | C3 新增字段全部带默认值，候选卡不进入默认召回；高置信两次观察自动转 active | 旧 JSON/SQLite 卡零迁移可读；防止未确认信息污染 Agent 上下文 |
 | 2026-09-03 | 记忆面板沿用现有列表并增加确认/拒绝操作，API 统一走 `update_status` | 避免新增面板子系统；生命周期出口与既有 CRUD 保持一致 |
+| 2026-09-03 | E1 对 memory 严格激活、knowledge 只排序不硬过滤 | 用户记忆允许按任务省略；论文知识不能因 query 未复述论文术语而丢失 |
+| 2026-09-03 | E2 先落三类任务档案并写入 trace，不引入学习型路由 | 保持确定性、可测试，先用回归与真实评测验证倾斜方向 |

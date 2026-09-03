@@ -7,6 +7,7 @@ The compiler owns assembly and budget accounting; ``ContextManager`` and
 from .models import BudgetPlan, ContextBlock, ContextIR, CompiledContext
 from .budget import BudgetManager
 from .compiler import ContextCompiler
+from .activation import select_items
 
 __all__ = [
     "BudgetManager",
@@ -15,4 +16,5 @@ __all__ = [
     "ContextBlock",
     "ContextCompiler",
     "ContextIR",
+    "select_items",
 ]
