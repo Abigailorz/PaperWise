@@ -275,7 +275,7 @@ E2 落地策略：
 - 规格变更（分区表、数据模型、状态机）必须先改本文件再动代码。
 - 验收失败需要缩水时，必须在决策记录写明缩小后的范围，不允许静默降级。
 - tag 规则：C1 + C2 完成 -> `v0.7.0-context-native`；C3 完成 ->
-  `v0.8.0-memory-pipeline`。
+  `v0.8.0-memory-pipeline`；E1 + E2 完成 -> `v0.9.0-context-activation`。
 
 ---
 

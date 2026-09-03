@@ -11,6 +11,13 @@
 
 ## 结果概览
 
+本次真实评测之前，已补齐 context-native Agent 的确定性回归层：
+
+- `tests/test_agents/test_context_native_agent.py`
+- 覆盖 ContextCompiler 默认接入 Agent、旧上下文路径回退、静态 system
+  前缀不变量、SessionMemory 触发与游标恢复
+- 当前全量测试基线：335 passed
+
 | 论文 | 通过 / 总数 | 通过率 | 平均步数 | 平均耗时 | 平均 tokens |
 |------|------------:|-------:|---------:|---------:|------------:|
 | LangSplat | 2 / 6 | 33.33% | 3.3 | 145.0s | 1140 |
