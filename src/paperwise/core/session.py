@@ -339,7 +339,10 @@ class AgentSession(AgentLoopMixin):
             )
         enhanced = "\n\n".join(parts)
 
-        user_msg = Message(role=Role.USER, content=enhanced)
+        user_msg = Message(
+            role=Role.USER, content=enhanced,
+            message_id=f"msg_{uuid.uuid4().hex[:16]}",
+        )
         self.state.messages.append(user_msg)
         self._hierarchical_memory.add_turn(user_msg)
         self._emit("user_msg", user_message[:100])
@@ -449,12 +452,19 @@ class AgentSession(AgentLoopMixin):
 
                 elif response.content:
                     # Agent 给出了文本回复
-                    text_msg = Message(role=Role.ASSISTANT, content=response.content)
+                    text_msg = Message(
+                        role=Role.ASSISTANT, content=response.content,
+                        message_id=f"msg_{uuid.uuid4().hex[:16]}",
+                    )
                     self.state.messages.append(text_msg)
                     self._hierarchical_memory.add_turn(text_msg)
 
                     # LLM 驱动记忆提取 + KB 关联搜索
-                    await self._auto_remember(user_message, response.content)
+                    await self._auto_remember(
+                        user_message,
+                        response.content,
+                        source_message_ids=[user_msg.message_id, text_msg.message_id],
+                    )
                     if self.knowledge_base:
                         self.knowledge_base.add_conversation_turn(user_message, response.content)
 
@@ -711,7 +721,12 @@ class AgentSession(AgentLoopMixin):
 
     # ══════════ 记忆系统 ══════════
 
-    async def _auto_remember(self, user_msg: str, agent_response: str):
+    async def _auto_remember(
+        self,
+        user_msg: str,
+        agent_response: str,
+        source_message_ids: Optional[list[str]] = None,
+    ):
         """LLM 驱动的记忆提取 —— 替代旧的关键词匹配。"""
         if not self.memory:
             return
@@ -719,7 +734,11 @@ class AgentSession(AgentLoopMixin):
         # 1. LLM 提取记忆
         try:
             saved = await self.memory.extract_from_conversation(
-                self.llm, user_msg, agent_response)
+                self.llm,
+                user_msg,
+                agent_response,
+                source_message_ids=source_message_ids,
+            )
             self.trace_collector.add_event(
                 TraceEventType.MEMORY_EXTRACT,
                 data={"cards_created": len(saved)},

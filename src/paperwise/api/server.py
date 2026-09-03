@@ -83,7 +83,7 @@ def _fire_scheduler_event(sid: str, event: dict) -> None:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.6.0"}
+    return {"status": "ok", "version": "0.8.0"}
 
 
 @app.get("/api/research-graph")
@@ -434,9 +434,12 @@ async def list_memory(request: Request):
     from paperwise.config.settings import get_settings
     from paperwise.memory.user_memory import UserMemory
     user_id = request.headers.get("X-User-Id", "default")
-    mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
-    cards = mem.query(limit=200)
-    return {"cards": [c.to_dict() for c in cards]}
+    mem = UserMemory(
+        get_settings().workspace_dir / ".paperwise" / user_id / "memory",
+        user_id=user_id,
+    )
+    cards = mem.query(limit=200, include_candidates=True)
+    return {"cards": [c.to_dict() for c in cards], "pending": len(mem.pending_cards())}
 
 
 @app.delete("/api/memory/{card_id}")
@@ -448,6 +451,29 @@ async def delete_memory(card_id: str, request: Request):
     mem = UserMemory(get_settings().workspace_dir / ".paperwise" / user_id / "memory")
     ok = mem.forget(card_id)
     return {"deleted": ok, "card_id": card_id}
+
+
+@app.post("/api/memory/{card_id}/status")
+async def update_memory_status(card_id: str, payload: dict, request: Request):
+    """Confirm or reject a candidate memory card from the management panel."""
+    from paperwise.config.settings import get_settings
+    from paperwise.memory.user_memory import UserMemory
+
+    user_id = request.headers.get("X-User-Id", "default")
+    requested = str(payload.get("status", "")).lower()
+    status_map = {"confirm": "active", "approved": "active", "reject": "dropped", "rejected": "dropped"}
+    status = status_map.get(requested, requested)
+    if status not in {"candidate", "active", "stale", "conflicting", "superseded", "dropped"}:
+        raise HTTPException(400, "非法记忆状态")
+
+    mem = UserMemory(
+        get_settings().workspace_dir / ".paperwise" / user_id / "memory",
+        user_id=user_id,
+    )
+    ok = mem.update_status(card_id, status)
+    if not ok:
+        raise HTTPException(404, "记忆卡不存在")
+    return {"updated": True, "card_id": card_id, "status": status}
 
 
 @app.get("/api/download")
@@ -518,7 +544,11 @@ async def _ensure_session(sid: str, workspace: Path,
         pass
     harness = Harness(workspace, max_steps=settings.max_steps)
     harness.context_manager.llm = llm
-    memory = UserMemory(global_store / "memory")     # 跨 Session 共享
+    memory = UserMemory(
+        global_store / "memory",
+        user_id=user_id,
+        candidate_pipeline_enabled=settings.candidate_pipeline_enabled,
+    )
     kb = KnowledgeBase(global_store / "kb", advanced_rag=get_settings().advanced_rag)           # 跨 Session 共享
     kb.set_llm_client(llm)
     # 周期性记忆整合（间隔内自动跳过）

@@ -23,13 +23,18 @@ class MemoryCard:
     person: str = "user"
     relationship: str = "self"
     confidence: float = 0.8
+    last_confirmed_at: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     last_verified: str = ""
     tags: list[str] = field(default_factory=list)
     version: int = 1     # 更新版本号
     source: str = "conversation"   # conversation | explicit | inference | feedback
-    status: str = "active"         # active | stale | conflicting | archived
+    status: str = "active"         # candidate | active | stale | conflicting | superseded | dropped
     user_id: str = "default"
+    importance: float = 0.5
+    stability: float = 0.0
+    observation_count: int = 1
+    source_message_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -50,8 +55,15 @@ class UserMemory:
 
     CATEGORIES = ["preference", "fact", "relationship", "experience", "knowledge"]
 
-    def __init__(self, storage_dir: Path = None, backend: str = "sqlite", user_id: str = "default"):
+    def __init__(
+        self,
+        storage_dir: Path = None,
+        backend: str = "sqlite",
+        user_id: str = "default",
+        candidate_pipeline_enabled: bool = False,
+    ):
         self.user_id = user_id
+        self.candidate_pipeline_enabled = candidate_pipeline_enabled
         self.storage_dir = Path(storage_dir or Path.home() / ".paperwise" / "memory")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         from paperwise.memory.storage import create_storage
@@ -68,7 +80,9 @@ class UserMemory:
     def remember(self, category: str, data: dict, backstory: str = "",
                  confidence: float = 0.8, tags: list[str] = None,
                  person: str = "user", relationship: str = "self",
-                 source: str = "conversation", user_id: Optional[str] = None) -> MemoryCard:
+                 source: str = "conversation", user_id: Optional[str] = None,
+                 status: str = "active", importance: float = 0.5,
+                 source_message_ids: Optional[list[str]] = None) -> MemoryCard:
         """记住一条信息。自动去重：同类别同 key 的数据会更新而非新增。"""
         import uuid
 
@@ -79,14 +93,22 @@ class UserMemory:
             existing.data.update(data)
             existing.backstory = backstory or existing.backstory
             existing.confidence = max(existing.confidence, confidence)
+            existing.confidence = min(1.0, existing.confidence + 0.05)
+            existing.observation_count = max(existing.observation_count, 1) + 1
+            existing.stability = min(1.0, existing.observation_count / 3.0)
+            existing.importance = max(existing.importance, importance)
             existing.last_verified = datetime.now().isoformat()
             existing.last_confirmed_at = datetime.now().isoformat()
+            existing.source_message_ids = list(set(
+                (existing.source_message_ids or []) + (source_message_ids or [])
+            ))
             existing.version += 1
             existing.tags = list(set((existing.tags or []) + (tags or [])))
             if source != "conversation":
                 existing.source = source
-            existing.status = "active"
             existing.tags = list(set((existing.tags or []) + (tags or [])))
+            if existing.status == "candidate":
+                existing.status = self._candidate_status(existing)
             self._save()
             return existing
 
@@ -96,11 +118,24 @@ class UserMemory:
             card_id=cid, category=category, data=data,
             backstory=backstory, confidence=confidence,
             tags=tags or [], person=person, relationship=relationship,
-            source=source, user_id=(user_id if user_id is not None else self.user_id), status="active",
+            source=source, user_id=(user_id if user_id is not None else self.user_id),
+            status=status, importance=importance,
+            stability=0.25 if status == "candidate" else 1.0,
+            observation_count=1,
+            source_message_ids=list(source_message_ids or []),
         )
         self.cards[cid] = card
         self._save()
         return card
+
+    @staticmethod
+    def _candidate_status(card: MemoryCard) -> str:
+        if card.confidence >= 0.8 and card.observation_count >= 2:
+            return "active"
+        return "candidate"
+
+    def pending_cards(self, limit: int = 100) -> list[MemoryCard]:
+        return self.query(statuses=["candidate"], limit=limit)
 
     def recall(self, card_id: str) -> Optional[MemoryCard]:
         return self.cards.get(card_id)
@@ -112,8 +147,13 @@ class UserMemory:
 
     # ══════════ LLM 驱动的记忆提取 ══════════
 
-    async def extract_from_conversation(self, llm_client, user_msg: str,
-                                        agent_response: str) -> list[MemoryCard]:
+    async def extract_from_conversation(
+        self,
+        llm_client,
+        user_msg: str,
+        agent_response: str,
+        source_message_ids: Optional[list[str]] = None,
+    ) -> list[MemoryCard]:
         """使用 LLM 从对话中提取结构化记忆。
 
         替代旧的关键词匹配方式。LLM 能理解语义，准确率远高于规则。
@@ -179,6 +219,9 @@ class UserMemory:
                     backstory="从对话中提取的研究方向",
                     confidence=0.85,
                     tags=["research", "llm_extracted"],
+                    status="candidate" if self.candidate_pipeline_enabled else "active",
+                    importance=0.8,
+                    source_message_ids=source_message_ids,
                 )
 
             for m in result.get("memories", []):
@@ -188,6 +231,9 @@ class UserMemory:
                     backstory=m.get("backstory", ""),
                     confidence=m.get("confidence", 0.7),
                     tags=["llm_extracted"],
+                    status="candidate" if self.candidate_pipeline_enabled else "active",
+                    importance=0.6,
+                    source_message_ids=source_message_ids,
                 )
                 saved.append(card)
             return saved
@@ -200,13 +246,24 @@ class UserMemory:
 
     def query(self, category: str = None, tags: list[str] = None,
               person: str = None, min_confidence: float = 0.0,
-              limit: int = 20) -> list[MemoryCard]:
+              limit: int = 20, statuses: Optional[list[str]] = None,
+              include_candidates: bool = False) -> list[MemoryCard]:
         results = list(self.cards.values())
         if category: results = [c for c in results if c.category == category]
         if tags: results = [c for c in results if any(t in c.tags for t in tags)]
         if person: results = [c for c in results if c.person == person]
         if min_confidence > 0: results = [c for c in results if c.confidence >= min_confidence]
-        results.sort(key=lambda c: c.timestamp, reverse=True)
+        if statuses is not None:
+            results = [c for c in results if c.status in statuses]
+        elif not include_candidates:
+            results = [
+                c for c in results
+                if c.status not in ("candidate", "dropped", "superseded")
+            ]
+        results.sort(
+            key=lambda c: (c.importance, c.confidence, self._card_ts(c)),
+            reverse=True,
+        )
         return results[:limit]
 
     def get_preferences(self) -> list[MemoryCard]:
@@ -298,6 +355,12 @@ class UserMemory:
                 keep.data.update(card.data)
                 keep.backstory = keep.backstory or card.backstory
                 keep.confidence = max(keep.confidence, card.confidence)
+                keep.observation_count = max(keep.observation_count, card.observation_count)
+                keep.stability = max(keep.stability, card.stability)
+                keep.importance = max(keep.importance, card.importance)
+                keep.source_message_ids = list(set(
+                    (keep.source_message_ids or []) + (card.source_message_ids or [])
+                ))
                 keep.tags = list(set((keep.tags or []) + (card.tags or [])))
                 keep.last_verified = card.last_verified or keep.last_verified
                 keep.version += 1
@@ -381,7 +444,8 @@ class UserMemory:
         for c in self.cards.values():
             cats[c.category] = cats.get(c.category, 0) + 1
         return {"total": len(self.cards), "by_category": cats,
-                "conflicts": len(self.detect_conflicts())}
+                "conflicts": len(self.detect_conflicts()),
+                "pending": len(self.pending_cards())}
 
     # ══════════ 内部 ══════════
 
@@ -392,7 +456,7 @@ class UserMemory:
         这类共享 key 名但值不同的卡片误合并。
         """
         for card in self.cards.values():
-            if card.category != category or card.status == "archived":
+            if card.category != category or card.status in ("archived", "superseded", "dropped"):
                 continue
             for key, value in data.items():
                 if key in card.data and card.data.get(key) == value:
@@ -400,12 +464,19 @@ class UserMemory:
         return None
 
     def update_status(self, card_id: str, status: str) -> bool:
-        """Update memory status (active | stale | conflicting | archived)."""
+        """Update memory status (candidate | active | stale | conflicting | superseded | dropped)."""
         card = self.cards.get(card_id)
         if not card:
             return False
         card.status = status
-        card.last_confirmed_at = datetime.now().isoformat()
+        confirmed_at = datetime.now().isoformat()
+        card.last_confirmed_at = confirmed_at
+        if status == "active":
+            card.last_verified = confirmed_at
+            card.observation_count = max(card.observation_count, 1)
+            card.stability = max(
+                card.stability, min(1.0, card.observation_count / 3.0)
+            )
         self._save()
         return True
 

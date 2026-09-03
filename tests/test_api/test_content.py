@@ -34,6 +34,35 @@ def test_memory_user_isolation(client, tmp_path):
     assert any(c["card_id"] == card.card_id for c in r.json()["cards"])
 
 
+def test_memory_candidate_pending_and_status_decision(client, tmp_path):
+    import paperwise.config.settings as settings_mod
+    from paperwise.memory.user_memory import UserMemory
+
+    ws = settings_mod.get_settings().workspace_dir
+    mem = UserMemory(ws / ".paperwise" / "default" / "memory")
+    card = mem.remember(
+        "fact", {"topic": "3DGS"}, confidence=0.7,
+        status="candidate", source_message_ids=["msg_1"],
+    )
+
+    r = client.get("/api/memory")
+    data = r.json()
+    assert data["pending"] == 1
+    listed = next(c for c in data["cards"] if c["card_id"] == card.card_id)
+    assert listed["status"] == "candidate"
+    assert listed["source_message_ids"] == ["msg_1"]
+
+    r = client.post(f"/api/memory/{card.card_id}/status", json={"status": "confirm"})
+    assert r.json() == {
+        "updated": True, "card_id": card.card_id, "status": "active",
+    }
+    r = client.get("/api/memory")
+    assert r.json()["pending"] == 0
+
+    r = client.post(f"/api/memory/{card.card_id}/status", json={"status": "bogus"})
+    assert r.status_code == 400
+
+
 def test_sections_save_and_get(client, tmp_path):
     import paperwise.config.settings as settings_mod
     pd = settings_mod.get_settings().workspace_dir / "paper_test"

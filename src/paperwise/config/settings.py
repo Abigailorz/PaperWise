@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # False: 基础 RAG（Dense + BM25 + Rerank）
     # True: 高级 RAG（额外启用 HyDE / RAPTOR / GraphRAG / 上下文感知查询）
 
+    # === Memory Pipeline ===
+    # False: LLM 提取的记忆立即生效（兼容旧行为）
+    # True: 先进入 candidate，两次独立观察或人工确认后才 active
+    candidate_pipeline_enabled: bool = Field(
+        default=False, alias="PAPERWISE_CANDIDATE_PIPELINE"
+    )
+
     # === Provider Resolution ===
     @property
     def api_key(self) -> str:

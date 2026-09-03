@@ -14,7 +14,7 @@
 |------|------|------|----------|----------|
 | C1 | Context Compiler + Execution State | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
 | C2 | Incremental Session Memory | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
-| C3 | User Memory Candidate Pipeline | 未开始 | `v0.8.0-memory-pipeline` | — |
+| C3 | User Memory Candidate Pipeline | 已落地 | `v0.8.0-memory-pipeline` | 本轮实施提交 |
 | E1 | Selective Activation（扩展点） | 未排期 | — | — |
 | E2 | 统一动态预算分配（扩展点） | 未排期 | — | — |
 
@@ -270,3 +270,5 @@ E2（扩展点）：按任务类型（问答 / 报告 / 研究循环）动态倾
 | 2026-09-03 | C1 初始装配切到 `ContextCompiler`，旧装配保留为关闭开关下的兼容路径 | 先覆盖最高风险的新任务入口；HierarchicalMemory 继续作为压缩后端 |
 | 2026-09-03 | C2 先落 SQLite 游标、稳定 message id、三类触发和确定性结构化摘要 | 满足幂等、压缩前兜底与崩溃续传；LLM 语义摘要留到有真实轨迹评估后再增强 |
 | 2026-09-03 | DAG 节点失败/超时也计入节点与全局预算 | 回归发现失败重试路径未扣预算，可能导致无限 replan；该修复是 C 系列回归的一部分 |
+| 2026-09-03 | C3 新增字段全部带默认值，候选卡不进入默认召回；高置信两次观察自动转 active | 旧 JSON/SQLite 卡零迁移可读；防止未确认信息污染 Agent 上下文 |
+| 2026-09-03 | 记忆面板沿用现有列表并增加确认/拒绝操作，API 统一走 `update_status` | 避免新增面板子系统；生命周期出口与既有 CRUD 保持一致 |

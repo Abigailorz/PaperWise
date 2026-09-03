@@ -703,7 +703,13 @@ async function refreshMemory() {
       const div = document.createElement('div');
       div.className = 'mem-card';
       const dataStr = Object.entries(c.data || {}).map(([k, v]) => `${k}: ${v}`).join('<br>');
-      div.innerHTML = `<div class="cat">${c.category} · ${Math.round((c.confidence || 0) * 100)}% 置信度
+      const statusLabel = c.status === 'candidate' ? '待确认' : c.status;
+      const controls = c.status === 'candidate'
+        ? `<button class="btn btn-sm" onclick="updateMemoryCardStatus('${c.card_id}', 'active')">确认</button>
+           <button class="btn btn-sm danger" onclick="updateMemoryCardStatus('${c.card_id}', 'dropped')">拒绝</button>`
+        : '';
+      div.innerHTML = `<div class="cat">${c.category} · ${statusLabel} · ${Math.round((c.confidence || 0) * 100)}% 置信度
+        ${controls}
         <button class="btn btn-sm danger" onclick="deleteMemoryCard('${c.card_id}')">删除</button></div>
         <div class="data">${escapeHtml(dataStr).replace(/\n/g, '<br>')}</div>
         <div class="back">${escapeHtml(c.backstory || '')}</div>`;
@@ -714,6 +720,15 @@ async function refreshMemory() {
 
 async function deleteMemoryCard(id) {
   await fetch(`/api/memory/${id}`, {method:'DELETE'});
+  refreshMemory();
+}
+
+async function updateMemoryCardStatus(id, status) {
+  await fetch(`/api/memory/${id}/status`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status})
+  });
   refreshMemory();
 }
 
