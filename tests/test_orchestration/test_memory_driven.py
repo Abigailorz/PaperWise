@@ -23,6 +23,21 @@ def test_assemble_context_returns_package(adapter: OrchestratorMemoryAdapter):
     assert "<context>" in pkg.to_xml()
 
 
+def test_assemble_context_routes_orchestrator_state_through_compiler(
+    adapter: OrchestratorMemoryAdapter,
+):
+    state = ResearchState(
+        state_id="rs_1", user_id="test", current_task="write report",
+        intent="report",
+    )
+    pkg = adapter.assemble_context(state)
+
+    assert pkg.compiled is not None
+    assert pkg.compiled.ir.budget_plan.task_type == "report"
+    assert pkg.compiled.ir.partition_tokens
+    assert "<task>" in pkg.to_xml()
+
+
 def test_apply_gaps_to_plan_inserts_verify_data(adapter: OrchestratorMemoryAdapter):
     plan = Plan()
     plan.add("Read paper", task_id="read_paper")

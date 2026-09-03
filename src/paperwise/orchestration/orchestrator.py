@@ -80,6 +80,7 @@ class SmartOrchestrator:
           workspace=self.workspace,
           user_id="default",
           research_state_manager=self.research_state_manager,
+          token_limit=self.base_config.token_budget,
       )
       self.dynamic_planner = DynamicDAGPlanner()
       self.plan_policy = PlanCompositionPolicy(use_dynamic_plan=use_dynamic_plan)
@@ -313,7 +314,12 @@ class SmartOrchestrator:
       )
       self.trace_collector.add_event(
           TraceEventType.CONTEXT_ASSEMBLED,
-          data={"context_size": context_package.size()},
+          data={
+              "mode": "compiler",
+              "context_size": context_package.size(),
+              "ir": context_package.compiled.ir.to_trace_dict()
+              if context_package.compiled else None,
+          },
       )
 
       route = await self.classifier.classify(task)

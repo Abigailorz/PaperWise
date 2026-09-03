@@ -12,6 +12,8 @@ from paperwise.memory.procedural_memory import ProceduralMemory
 from paperwise.memory.research_state import ResearchState
 from paperwise.memory.knowledge_base import KnowledgeBase
 from paperwise.core.hierarchical_memory import HierarchicalMemory
+from paperwise.context.compiler import ContextCompiler
+from paperwise.context.models import CompiledContext
 
 
 @dataclass
@@ -49,8 +51,21 @@ class ContextPackage:
     procedures: list[dict] = field(default_factory=list)
     paper_context: list[dict] = field(default_factory=list)
     working_memory: str = ""
+    compiled: Optional[CompiledContext] = None
 
     def to_xml(self) -> str:
+        if self.compiled is not None:
+            lines = ["<context>"]
+            rendered_partitions = {
+                "task", "execution_state", "memory", "knowledge", "session_summary"
+            }
+            for block in self.compiled.ir.blocks:
+                if block.partition not in rendered_partitions or not block.content:
+                    continue
+                lines.append(f"  <{block.partition}>\n{block.content}\n  </{block.partition}>")
+            lines.append("</context>")
+            return "\n".join(lines)
+
         lines = ["<context>"]
         if self.profile:
             lines.append("  <profile>")

@@ -19,6 +19,7 @@ from paperwise.memory.context_engine import ContextEngine, ContextPackage
 from paperwise.memory.research_state import ResearchState, ResearchStateManager, KnowledgeGap
 from paperwise.memory.episodic_memory import EpisodicMemory
 from paperwise.memory.procedural_memory import ProceduralMemory
+from paperwise.context.compiler import ContextCompiler
 
 
 class OrchestratorMemoryAdapter:
@@ -34,6 +35,7 @@ class OrchestratorMemoryAdapter:
         procedural_memory: Optional[ProceduralMemory] = None,
         strategy_library: Optional[StrategyLibrary] = None,
         signal_generator: Optional[LearningSignalGenerator] = None,
+        token_limit: int = 128_000,
     ):
         self.workspace = Path(workspace)
         self.user_id = user_id
@@ -43,6 +45,7 @@ class OrchestratorMemoryAdapter:
         self.context_engine = context_engine or ContextEngine(
             self.workspace, user_id=user_id
         )
+        self.context_compiler = ContextCompiler(token_limit=token_limit)
         self.episodic_memory = episodic_memory or EpisodicMemory(
             self.workspace / ".paperwise" / user_id / "episodes", user_id=user_id
         )
@@ -57,8 +60,9 @@ class OrchestratorMemoryAdapter:
         self._applied_strategy_ids: list[str] = []
 
     def assemble_context(self, research_state: ResearchState) -> ContextPackage:
-        """为当前任务组装完整上下文。"""
-        return self.context_engine.assemble(research_state)
+        """Retrieve source state and let ContextCompiler assemble the context."""
+        package = self.context_engine.assemble(research_state)
+        return self._compile_package(research_state, package)
 
     def assemble_context_for_subagent(
         self,
@@ -67,11 +71,41 @@ class OrchestratorMemoryAdapter:
         max_chars: int = 4000,
     ) -> ContextPackage:
         """为特定子 Agent 节点组装过滤后的上下文。"""
-        return self.context_engine.assemble_for_subagent(
+        package = self.context_engine.assemble_for_subagent(
             node_id=node_id,
             research_state=research_state,
             max_chars=max_chars,
         )
+        return self._compile_package(research_state, package)
+
+    def _compile_package(
+        self,
+        research_state: ResearchState,
+        package: ContextPackage,
+    ) -> ContextPackage:
+        """Convert retrieved source lists into a compiler-owned context IR."""
+        memories = package.profile + package.episodes + package.procedures
+        knowledge = package.paper_context
+        package.compiled = self.context_compiler.compile(
+            query=research_state.current_task or "Analyze the current paper.",
+            system_prompt=(
+                "You are a rigorous academic-paper analysis agent. "
+                "Use the supplied state and knowledge; do not fabricate evidence."
+            ),
+            workspace=self.workspace,
+            runtime_state={
+                "state_id": research_state.state_id,
+                "intent": research_state.intent,
+                "complexity": research_state.complexity,
+                "dag_status": research_state.dag_status,
+                "completed_nodes": research_state.completed_nodes,
+                "failed_nodes": research_state.failed_nodes,
+            },
+            memories=memories,
+            knowledge=knowledge,
+            task_type=research_state.intent or "research_loop",
+        )
+        return package
 
     def apply_gaps_to_plan(self, plan: Plan, research_state: ResearchState) -> Plan:
         """根据未解决的 gaps 在 Plan 中插入恢复/验证节点。
