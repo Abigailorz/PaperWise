@@ -294,3 +294,4 @@ E2 落地策略：
 | 2026-09-03 | 记忆面板沿用现有列表并增加确认/拒绝操作，API 统一走 `update_status` | 避免新增面板子系统；生命周期出口与既有 CRUD 保持一致 |
 | 2026-09-03 | E1 对 memory 严格激活、knowledge 只排序不硬过滤 | 用户记忆允许按任务省略；论文知识不能因 query 未复述论文术语而丢失 |
 | 2026-09-03 | E2 先落三类任务档案并写入 trace，不引入学习型路由 | 保持确定性、可测试，先用回归与真实评测验证倾斜方向 |
+| 2026-09-04 | Orchestrator 的全局上下文装配也统一走 `ContextCompiler`，并将 IR 写入 `CONTEXT_ASSEMBLED` trace | Agent 初始上下文已稳定后，收拢 Orchestrator 与 Agent 的装配入口，方便统一观测预算和分区 |
