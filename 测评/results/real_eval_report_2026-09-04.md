@@ -9,63 +9,104 @@
 - 固定论文：`LangSplat`、`Feature 3DGS`
 - 运行设置：每篇论文 6 个场景，`k=1`
 
-## 结果概览
+## 结论摘要
 
-本次真实评测之前，已补齐 context-native Agent 的确定性回归层：
+第一轮评测在 Agent 级 ContextCompiler 测试落地后进行。随后 Orchestrator 的
+上下文装配改为经由 `ContextCompiler` 汇编，并复测一轮。终版结果显示：
 
-- `tests/test_agents/test_context_native_agent.py`
-- 覆盖 ContextCompiler 默认接入 Agent、旧上下文路径回退、静态 system
-  前缀不变量、SessionMemory 触发与游标恢复
-- 当前全量测试基线：335 passed
+- LangSplat 通过数从 2/6 提升到 4/6。数值事实与方法验证从失败转为通过。
+- Feature 3DGS 通过数从 3/6 下降到 2/6。数值事实出现新的 120s 超时；
+  方法验证仍被异源 Judge 拦截 major 幻觉。
+- 两轮共同暴露的瓶颈是 `critical_analysis` 和 `report_generation` 长链路
+  超时。终版报告需要优先解决超时前的可评分中间产物保留，而不是继续把
+  这一问题归因于局部上下文质量。
+
+## 终版结果
+
+终版代码包含 Orchestrator 到 `ContextCompiler` 的完整路由。全量回归在复测
+前为 336 passed。
 
 | 论文 | 通过 / 总数 | 通过率 | 平均步数 | 平均耗时 | 平均 tokens |
 |------|------------:|-------:|---------:|---------:|------------:|
-| LangSplat | 2 / 6 | 33.33% | 3.3 | 145.0s | 1140 |
-| Feature 3DGS | 3 / 6 | 50.00% | 2.8 | 147.2s | 1212 |
-
-## 分场景结果
+| LangSplat | 4 / 6 | 66.67% | 3.3 | 145.7s | 1070 |
+| Feature 3DGS | 2 / 6 | 33.33% | 1.8 | 144.7s | 877 |
 
 ### LangSplat
 
 | 场景 | 结果 | 步数 | 耗时 | 工具合法率 | 关键信息 |
 |------|------|-----:|-----:|-----------:|----------|
-| basic_info_extraction | PASS | 3 | 55.1s | 100% | 命中主要贡献，无严重幻觉 |
-| numerical_fact_verification | FAIL | 5 | 99.7s | 100% | 幻觉评审判定 critical |
-| method_verification | FAIL | 7 | 157.2s | 100% | 幻觉评审判定 major |
+| basic_info_extraction | PASS | 3 | 49.3s | 100% | 命中主要贡献，无严重幻觉 |
+| numerical_fact_verification | PASS | 5 | 111.6s | 100% | 本轮通过，评分 0.95 |
+| method_verification | PASS | 7 | 152.6s | 100% | 本轮通过；Judge 未见 major/critical 幻觉 |
 | critical_analysis | FAIL | 0 | 180.1s | 0% | 超时 |
-| hallucination_veto | PASS | 5 | 77.9s | 100% | 正确拒答不存在的 BLEU 指标 |
+| hallucination_veto | PASS | 5 | 80.6s | 100% | 正确拒答不存在的 BLEU 指标 |
 | report_generation | FAIL | 0 | 300.1s | 0% | 超时 |
 
 ### Feature 3DGS
 
 | 场景 | 结果 | 步数 | 耗时 | 工具合法率 | 关键信息 |
 |------|------|-----:|-----:|-----------:|----------|
-| basic_info_extraction | PASS | 3 | 60.6s | 100% | 命中主要贡献，无幻觉 |
-| numerical_fact_verification | FAIL | 5 | 119.1s | 100% | 幻觉评审判定 major |
-| method_verification | PASS | 5 | 144.8s | 100% | 蒸馏机制与 prompting 能力描述合格 |
+| basic_info_extraction | PASS | 3 | 62.4s | 100% | 命中主要贡献，无幻觉 |
+| numerical_fact_verification | FAIL | 0 | 120.1s | 0% | 本轮为 120s 超时 |
+| method_verification | FAIL | 4 | 104.4s | 100% | Judge 拦截不可证实的损失函数、维度和栅格化细节 |
 | critical_analysis | FAIL | 0 | 180.1s | 0% | 超时 |
-| hallucination_veto | PASS | 4 | 78.7s | 100% | 正确拒答不存在的 COCO mAP |
+| hallucination_veto | PASS | 4 | 101.0s | 100% | 正确拒答不存在的 COCO mAP |
 | report_generation | FAIL | 0 | 300.1s | 0% | 超时 |
+
+## 第一轮对照
+
+第一轮在 `tests/test_agents/test_context_native_agent.py` 与真实评测报告
+落地后运行；当时 Orchestrator 上下文尚未全部经由 `ContextCompiler` 汇编。
+
+| 论文 | 通过 / 总数 | 通过率 | 平均步数 | 平均耗时 | 平均 tokens |
+|------|------------:|-------:|---------:|---------:|------------:|
+| LangSplat | 2 / 6 | 33.33% | 3.3 | 145.0s | 1140 |
+| Feature 3DGS | 3 / 6 | 50.00% | 2.8 | 147.2s | 1212 |
+
+### LangSplat 对照
+
+| 场景 | 第一轮 | 终版 | 变化 |
+|------|--------|------|------|
+| basic_info_extraction | PASS | PASS | 持平 |
+| numerical_fact_verification | FAIL，critical 幻觉 | PASS | 修复 |
+| method_verification | FAIL，major 幻觉 | PASS | 修复 |
+| critical_analysis | FAIL，180s 超时 | FAIL，180s 超时 | 持平 |
+| hallucination_veto | PASS | PASS | 持平 |
+| report_generation | FAIL，300s 超时 | FAIL，300s 超时 | 持平 |
+
+### Feature 3DGS 对照
+
+| 场景 | 第一轮 | 终版 | 变化 |
+|------|--------|------|------|
+| basic_info_extraction | PASS | PASS | 持平 |
+| numerical_fact_verification | FAIL，major 幻觉 | FAIL，120s 超时 | 失败形态变化 |
+| method_verification | PASS | FAIL，major 幻觉 | 回退 |
+| critical_analysis | FAIL，180s 超时 | FAIL，180s 超时 | 持平 |
+| hallucination_veto | PASS | PASS | 持平 |
+| report_generation | FAIL，300s 超时 | FAIL，300s 超时 | 持平 |
 
 ## 主要观察
 
 1. **基础事实与幻觉拒答稳定**：两篇论文的 `basic_info_extraction` 和
-   `hallucination_veto` 都通过，说明 Agent 的定向读取、检索和“不存在就
-   不编造”的基础行为可用。
-2. **数值细节是主要失败点**：主模型在给出 headline 数值之外，还补充了
-   表格级细节。这些细节在评审判例中被判定为不可证实，说明输出约束应从
-   “有引用”进一步收紧到“只有被检索片段直接支持的数值才能输出”。
-3. **长链路收尾是第二个失败点**：`critical_analysis` 和
-   `report_generation` 连续在 180s / 300s 超时，且记录中的步数为 0，
-   表示任务没有在超时前形成可评分的最终输出。这一现象在两篇论文上重复，
-   不是单次偶发。
+   `hallucination_veto` 在两轮均通过，说明定向读取、检索和“不存在就不
+   编造”的基础行为可用。
+2. **数值和方法验证存在波动**：LangSplat 终版通过，但 Feature 3DGS 终版
+   的数值场景超时、方法场景被 `deepseek-v4-flash` 拦截。当前主模型在
+   headline 数值之外仍倾向补充表格级细节；输出约束应从“有引用”收紧到
+   “只有被检索片段直接支持的数值才能输出”。
+3. **长链路收尾是系统性失败点**：`critical_analysis` 和
+   `report_generation` 在两篇论文和两轮评测中全部超时，且记录步数为 0。
+   这说明评测器没有拿到可评分的最终输出，需要允许超时前保留和提交中间
+   结果。
 4. **异源评审有效**：`deepseek-v4-flash` 能拦截主模型的不可证实细节，
-   同时没有误拦基础问答和拒答场景。
+   同时没有误拦基础问答和拒答场景。该模型固定作为本报告的异源 Judge。
 
 ## 原始结果
 
-- LangSplat：`workspace/benchmarks/real_eval_1788452848.json`
-- Feature 3DGS：`workspace/benchmarks/real_eval_1788454042.json`
+- 终版 LangSplat：`workspace/benchmarks/real_eval_1788456552.json`
+- 终版 Feature 3DGS：`workspace/benchmarks/real_eval_1788457517.json`
+- 第一轮 LangSplat：`workspace/benchmarks/real_eval_1788452848.json`
+- 第一轮 Feature 3DGS：`workspace/benchmarks/real_eval_1788454042.json`
 
 ## 下一轮建议
 
@@ -74,3 +115,5 @@
 2. 对报告/分析类长任务拆分中间产物，允许超时前保留可评分的部分结果。
 3. 为 `critical_analysis` 和 `report_generation` 分别做超时消融，确认瓶颈
    在模型生成速度、编排步数，还是验证/评分前的收尾流程。
+4. 将异源 Judge 约定固化为 `PAPERWISE_JUDGE_MODEL=deepseek-v4-flash`，避免
+   后续评测中主模型与 Judge 混用同一模型。
