@@ -70,6 +70,9 @@ class MockLLMClient:
     def count_tokens(self, text: str) -> int:
         return len(text) // 2
 
+    def estimate_cost(self, usage: dict) -> float:
+        return 0.0
+
 
 def make_response(content="", tool_calls=None, reasoning=""):
     """Helper: create LLMResponse."""
@@ -133,6 +136,8 @@ class TestE2EPipeline:
             system_prompt="You are a helpful assistant. Use tools to analyze papers.",
             model="test-model",
             max_steps=10,
+            enable_plan=False,
+            enable_orchestration=False,
         )
 
         agent = Agent(
@@ -178,7 +183,10 @@ class TestE2EPipeline:
 
         harness = Harness(paper_dir, max_steps=3)  # 限制 3 步
 
-        config = AgentConfig(name="test", system_prompt="...", max_steps=3)
+        config = AgentConfig(
+            name="test", system_prompt="...", max_steps=3,
+            enable_orchestration=False,
+        )
         agent = Agent(config=config, tools=tools, llm_client=mock_llm,
                       harness=harness, workspace_dir=paper_dir)
 

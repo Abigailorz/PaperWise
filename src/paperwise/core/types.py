@@ -49,6 +49,7 @@ class Message:
     """对话中的一条消息"""
     role: Role
     content: Optional[str] = None
+    message_id: Optional[str] = None
     tool_calls: Optional[list[ToolCall]] = None
     tool_call_id: Optional[str] = None  # for Role.TOOL messages
     reasoning: Optional[str] = None     # thinking/CoT content
@@ -57,6 +58,7 @@ class Message:
         return {
             "role": self.role.value,
             "content": self.content,
+            "message_id": self.message_id,
             "tool_calls": [tc.to_dict() if hasattr(tc, "to_dict") else {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in (self.tool_calls or [])],
             "tool_call_id": self.tool_call_id,
             "reasoning": self.reasoning,
@@ -95,6 +97,8 @@ class AgentConfig:
     enable_budget_note: bool = True
     enable_judge_review: bool = True
     enable_hierarchical_memory: bool = True
+    enable_context_compiler: bool = True
+    enable_session_memory: bool = True
     enable_orchestration: bool = True
 
 
@@ -129,11 +133,12 @@ class AgentResult:
             if isinstance(m, dict):
                 role = Role(m.get("role", "assistant"))
                 content = m.get("content")
+                message_id = m.get("message_id")
                 tool_calls = None
                 tool_call_id = m.get("tool_call_id")
                 if m.get("tool_calls"):
                     tool_calls = [ToolCall(**tc) for tc in m["tool_calls"]]
-                messages.append(Message(role=role, content=content, tool_calls=tool_calls, tool_call_id=tool_call_id))
+                messages.append(Message(role=role, content=content, message_id=message_id, tool_calls=tool_calls, tool_call_id=tool_call_id))
         return cls(
             final_output=data.get("final_output", ""),
             messages=messages,

@@ -17,6 +17,8 @@ from paperwise.core.plan import Plan, TaskStatus
 from paperwise.core.hierarchical_memory import HierarchicalMemory
 from paperwise.core.agent_loop import AgentLoopMixin
 from paperwise.core.trace_collector import TraceCollector, create_trace_collector
+from paperwise.context.compiler import ContextCompiler
+from paperwise.memory.session_memory import SessionMemory
 from paperwise.harness.harness import Harness
 from paperwise.harness.constraints import ConstraintViolation
 from paperwise.tools.registry import ToolRegistry
@@ -60,6 +62,9 @@ class Agent(AgentLoopMixin):
 
         self._plan = Plan()
         self._memory = HierarchicalMemory(self.workspace, llm_client=self.llm)
+        self._context_compiler = ContextCompiler(token_limit=config.token_budget)
+        self._context_ir = None
+        self._session_memory = self._create_session_memory()
 
         from paperwise.config.settings import get_settings
         settings = get_settings()
@@ -162,7 +167,7 @@ class Agent(AgentLoopMixin):
                 if budget_note:
                     budget_msg = Message(role=Role.USER, content=budget_note)
                     self.state.messages.append(budget_msg)
-                    self._memory.add_turn(budget_msg)
+                    self._remember_message(budget_msg)
 
                 # === Optional hierarchical memory compression before LLM ===
                 if getattr(self.config, "enable_hierarchical_memory", True):
@@ -207,7 +212,7 @@ class Agent(AgentLoopMixin):
                         reasoning=response.reasoning,
                     )
                     self.state.messages.append(assistant_msg)
-                    self._memory.add_turn(assistant_msg)
+                    self._remember_message(assistant_msg)
 
                     for tc in response.tool_calls:
                         t1 = time.time()
@@ -234,7 +239,7 @@ class Agent(AgentLoopMixin):
                             tool_call_id=tc.id,
                         )
                         self.state.messages.append(tool_msg)
-                        self._memory.add_turn(tool_msg)
+                        self._remember_message(tool_msg)
 
                 elif response.content:
                     # ---- Text response branch ----
@@ -244,7 +249,7 @@ class Agent(AgentLoopMixin):
                         reasoning=response.reasoning,
                     )
                     self.state.messages.append(text_msg)
-                    self._memory.add_turn(text_msg)
+                    self._remember_message(text_msg)
 
                     # Early termination check
                     if self._consecutive_text_responses >= self._early_term_threshold:
@@ -272,7 +277,7 @@ class Agent(AgentLoopMixin):
                                 )
                             )
                             self.state.messages.append(retry_msg)
-                            self._memory.add_turn(retry_msg)
+                            self._remember_message(retry_msg)
                             self.trace_collector.add_event(
                                 TraceEventType.STEP_END,
                                 data={"status": "verification_failed"},
@@ -516,16 +521,81 @@ class Agent(AgentLoopMixin):
             "Claims without a valid source will be treated as hallucinations.\n"
             "</citation_rules>\n"
         )
-        self.state.messages = self._memory.build_initial_context(
+        legacy_messages = self._memory.build_initial_context(
             system_prompt=self.config.system_prompt + citation_rule,
             task="".join(enhanced_task),
             workspace=self.workspace,
             plan_text=plan_text,
         )
 
+        if getattr(self.config, "enable_context_compiler", True):
+            compiled = self._context_compiler.compile(
+                query="".join(enhanced_task),
+                system_prompt=self.config.system_prompt + citation_rule,
+                workspace=self.workspace,
+                plan_text=plan_text,
+                runtime_state=self.state,
+                session_summary=self._session_memory.state.summary if self._session_memory else "",
+            )
+            self.state.messages = compiled.messages
+            self._context_ir = compiled.ir
+            self.trace_collector.add_event(
+                TraceEventType.CONTEXT_ASSEMBLED,
+                data={
+                    "mode": "compiler",
+                    "ir": compiled.ir.to_trace_dict(),
+                    "legacy_message_count": len(legacy_messages),
+                },
+                step=self.state.current_step,
+            )
+        else:
+            self.state.messages = legacy_messages
+            self._context_ir = None
+            self.trace_collector.add_event(
+                TraceEventType.CONTEXT_ASSEMBLED,
+                data={"mode": "legacy", "message_count": len(legacy_messages)},
+                step=self.state.current_step,
+            )
+        if self._session_memory:
+            self._session_memory.observe_all(self.state.messages)
+
+    def _create_session_memory(self) -> SessionMemory | None:
+        """SessionMemory is task-local, while its cursor survives process restarts."""
+        if not getattr(self.config, "enable_session_memory", True):
+            return None
+        try:
+            return SessionMemory(
+                self.workspace / ".paperwise" / "session_memory",
+                session_id=self.config.name,
+                user_id="default",
+            )
+        except Exception:
+            return None
+
+    def _remember_message(self, message: Message) -> None:
+        self._memory.add_turn(message)
+        if self._session_memory:
+            self._session_memory.observe(message)
+
     async def _maybe_compress_memory(self) -> None:
         """Compress context before an LLM call if needed."""
         try:
+            if self._session_memory:
+                delta, triggers = self._session_memory.maybe_extract(
+                    before_compaction=True,
+                )
+                if delta:
+                    self._session_memory.commit(delta)
+                    self.trace_collector.add_event(
+                        TraceEventType.MEMORY_EXTRACT,
+                        data={
+                            "trigger": triggers,
+                            "delta_id": delta.delta_id,
+                            "message_ids": delta.message_ids,
+                            "token_delta": delta.token_delta,
+                        },
+                        step=self.state.current_step,
+                    )
             compressed = await self._memory.amaybe_compress(
                 self.state.token_limit, self.state.tokens_used
             )

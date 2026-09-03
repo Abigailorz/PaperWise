@@ -12,8 +12,8 @@
 
 | 阶段 | 内容 | 状态 | 版本目标 | 落盘提交 |
 |------|------|------|----------|----------|
-| C1 | Context Compiler + Execution State | 未开始 | `v0.7.0-context-native` | — |
-| C2 | Incremental Session Memory | 未开始 | 随 C1 同版或紧随 | — |
+| C1 | Context Compiler + Execution State | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
+| C2 | Incremental Session Memory | 已落地 | `v0.7.0-context-native` | 本轮实施提交 |
 | C3 | User Memory Candidate Pipeline | 未开始 | `v0.8.0-memory-pipeline` | — |
 | E1 | Selective Activation（扩展点） | 未排期 | — | — |
 | E2 | 统一动态预算分配（扩展点） | 未排期 | — | — |
@@ -267,4 +267,6 @@ E2（扩展点）：按任务类型（问答 / 报告 / 研究循环）动态倾
 | 2026-09-03 | C1 采用 shadow 迁移而非直接切换 | 308 个回归测试是资产，行为等价优先于架构洁癖 |
 | 2026-09-03 | C2 触发条件定为 Token Delta / Semantic Event / Before Compaction | 每轮提取成本高且不稳定；压缩前必须兜底 |
 | 2026-09-03 | C3 高置信自动确认 + 低置信面板人工确认 | 与现有记忆管理面板能力衔接，避免候选无限堆积 |
-| 2026-09-03 | Selective Activation 与动态预算列为扩展点 E1/E2 | 保持 C 系列范围可控，先闭环再增强 |
+| 2026-09-03 | C1 初始装配切到 `ContextCompiler`，旧装配保留为关闭开关下的兼容路径 | 先覆盖最高风险的新任务入口；HierarchicalMemory 继续作为压缩后端 |
+| 2026-09-03 | C2 先落 SQLite 游标、稳定 message id、三类触发和确定性结构化摘要 | 满足幂等、压缩前兜底与崩溃续传；LLM 语义摘要留到有真实轨迹评估后再增强 |
+| 2026-09-03 | DAG 节点失败/超时也计入节点与全局预算 | 回归发现失败重试路径未扣预算，可能导致无限 replan；该修复是 C 系列回归的一部分 |

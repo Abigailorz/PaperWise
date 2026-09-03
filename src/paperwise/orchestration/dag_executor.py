@@ -316,6 +316,9 @@ class DAGExecutor:
             return result
         except asyncio.TimeoutError:
             latency_ms = (time.time() - t0) * 1000
+            if nb:
+                nb["steps_used"] += 1
+            state.budget["steps_used"] = state.budget.get("steps_used", 0) + 1
             self.trace_collector.add_event(
                 TraceEventType.NODE_FAILED,
                 data={"node_id": task.id, "reason": "timeout", "latency_ms": round(latency_ms, 2)},
@@ -324,6 +327,9 @@ class DAGExecutor:
             )
             raise DAGExecutorError(f"Node {task.id} timed out")
         except Exception as e:
+            if nb:
+                nb["steps_used"] += 1
+            state.budget["steps_used"] = state.budget.get("steps_used", 0) + 1
             self.trace_collector.add_event(
                 TraceEventType.NODE_FAILED,
                 data={"node_id": task.id, "reason": str(e)},
