@@ -1,5 +1,6 @@
 """P9 tests — Cross-Paper Evidence, Rules, Graph Queries, and Research Loop."""
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -340,3 +341,60 @@ def test_evidence_precision_baseline():
     citation = snippet.citation()
     assert "paper_a" in citation
     assert "L10-L20" in citation
+
+
+# ══════════ P9.4 Output Integration (Report / PPT) ══════════
+
+def test_fallback_slides_include_cross_paper_section():
+    from paperwise.generators.slides import build_fallback_slides
+
+    deck = build_fallback_slides({
+        "title": "Paper A",
+        "sections": {
+            "cross_paper": "- [contradictions] 跨论文矛盾：两篇论文对同一指标的说法相反",
+        },
+    })
+    headings = [s.get("heading") for s in deck["slides"]]
+    assert "跨论文分析" in headings
+
+
+def test_report_assemble_orders_cross_paper_section(tmp_path):
+    from paperwise.generators.report import ReportGenerator
+
+    paper_dir = tmp_path / "demo"
+    sections_dir = paper_dir / "report" / "sections"
+    sections_dir.mkdir(parents=True)
+    for name in ("overview", "cross_paper_analysis", "conclusion"):
+        (sections_dir / f"{name}.md").write_text(f"{name} content", encoding="utf-8")
+
+    report = ReportGenerator(tmp_path).assemble(paper_dir)
+    content = report.read_text(encoding="utf-8")
+    overview_pos = content.index("overview content")
+    cross_pos = content.index("cross_paper_analysis content")
+    conclusion_pos = content.index("conclusion content")
+    assert overview_pos < cross_pos < conclusion_pos
+
+
+def test_collect_narrative_includes_cross_paper_sections(tmp_path):
+    from paperwise.tools.generation_tools import GeneratePPTXTool
+
+    paper_dir = tmp_path / "demo"
+    paper_dir.mkdir()
+    narrative = {
+        "findings_summary": [],
+        "cross_paper_sections": [
+            {
+                "section_type": "contradictions",
+                "title": "跨论文矛盾",
+                "content": "Paper A and Paper B disagree",
+                "source_papers": ["paper_a", "paper_b"],
+            },
+        ],
+    }
+    (paper_dir / "research_narrative.json").write_text(
+        json.dumps(narrative, ensure_ascii=False), encoding="utf-8")
+
+    sections = {}
+    GeneratePPTXTool._collect_narrative(paper_dir, sections)
+    packed = json.loads(sections["research_narrative"])
+    assert packed["cross_paper_sections"][0]["section_type"] == "contradictions"

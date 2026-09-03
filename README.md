@@ -1,4 +1,4 @@
-# PaperWise — AI 学术论文智能解读系统 v0.5.0
+# PaperWise — AI 学术论文智能解读系统 v0.6.0
 
 基于《深入理解 AI Agent：设计原理与工程实践》全书知识体系构建。
 
@@ -23,7 +23,7 @@ paperwise generate pptx workspace/{paper}/     # 生成 PPT
 paperwise evaluate report.md workspace/{paper}/ # 评估质量
 
 # 4. 运行测试
-pytest tests/ -v                               # 60 个单元测试
+pytest tests/ -v                               # 311 个单元/集成测试（另有 4 个 e2e 真实 LLM 测试）
 python tests/run_agent_tests.py                # Agent 能力测试
 ```
 
@@ -48,6 +48,7 @@ python tests/run_agent_tests.py                # Agent 能力测试
 10. **评估 Dashboard** — 打开 `http://localhost:8000/dashboard` 查看 Pass@k 趋势
 11. **主动论文推荐** — 从记忆自动学习兴趣画像（无需手动填研究方向），据此检索 arXiv 新论文，横幅一键"解读这篇"；每日定时推送
 12. **Research Graph** — Evidence / Claim / Method / Opportunity 实体化，跨任务持久累积研究状态
+13. **跨论文分析（P9）** — 多论文库的方法对比 / 矛盾 / 互补自动发现，报告与 PPT 自动注入跨论文章节
 
 ## CLI 命令
 
@@ -89,7 +90,7 @@ PaperWise/
 │   ├── cli/                    # CLI (Typer + Rich)
 │   └── config/                 # 配置 (25 项可配置)
 ├── skills/                     # Skill 定义 (Markdown)
-├── tests/                      # 38 单元测试 + Agent 能力测试 + MCP 集成脚本
+├── tests/                      # 311 单元/集成测试 + Agent 能力测试 + MCP 集成脚本
 │   └── test_data/              # 测试数据集
 ├── 测评/                       # 测评设计 / 结果 / 金标 / 消融实验 / 复现脚本
 ├── docs/                       # 文档

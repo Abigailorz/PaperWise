@@ -37,7 +37,7 @@ class MCPServer:
     """
 
     SERVER_NAME = "paperwise"
-    SERVER_VERSION = "0.5.0"
+    SERVER_VERSION = "0.6.0"
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, tool_registry: ToolRegistry, workspace: Optional[Path] = None,

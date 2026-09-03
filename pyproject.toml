@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paperwise"
-version = "0.5.0"
+version = "0.6.0"
 description = "AI-powered academic paper interpretation and report generation system"
 requires-python = ">=3.10"
 readme = "README.md"

@@ -29,6 +29,7 @@ class ReportGenerator:
         ("experiments", "Experimental Design & Results"),
         ("critical_analysis", "Critical Analysis"),
         ("related_work", "Related Work Context"),
+        ("cross_paper_analysis", "Cross-Paper Analysis"),
         ("conclusion", "Conclusion & Future Directions"),
     ]
 
@@ -134,7 +135,15 @@ For each section, provide thorough analysis with specific evidence from the pape
    - What does this paper do that prior work doesn't?
    - Are there relevant works the authors didn't cite?
 
-7. **report/sections/conclusion.md** — Conclusion & Future Directions
+7. **report/sections/cross_paper_analysis.md** — Cross-Paper Analysis (P9, optional)
+   - Only write this section when cross-paper evidence or opportunities are
+     available (e.g., research_narrative.json contains cross_paper_sections)
+   - How does this paper's method compare to related papers in the library?
+   - Where do the papers contradict each other, with evidence from both sides?
+   - Where are complementary strengths that suggest a combination direction?
+   - Cite every claim with the source paper id and section/line number
+
+8. **report/sections/conclusion.md** — Conclusion & Future Directions
    - Summary of contributions (be specific, not generic)
    - Open questions raised by this work
    - Potential future research directions
@@ -181,8 +190,16 @@ Re-assemble report/report.md (already created as a skeleton in step 3) so that i
             except Exception:
                 pass
 
+        # Deterministic ordering: canonical REPORT_SECTIONS order first, then
+        # any extra section files (alphabetical) so cross_paper_analysis lands
+        # in its intended place instead of raw alphabetical order.
+        canonical = [name for name, _ in self.REPORT_SECTIONS]
+        ordered = [sp for name in canonical
+                   for sp in sections if sp.stem == name]
+        ordered += [sp for sp in sections if sp.stem not in canonical]
+
         toc, body = [], []
-        for i, sp in enumerate(sections, 1):
+        for i, sp in enumerate(ordered, 1):
             name = sp.stem
             content = sp.read_text(encoding="utf-8", errors="replace").strip()
             toc.append(f"{i}. {name}")

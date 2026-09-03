@@ -290,6 +290,23 @@ Phase 1 边界：机会只落盘为 pending（ResearchState.opportunities），
 不主动推送、不改 UI、不自动执行 DAG。
 ```
 
+### 3.12 跨论文研究智能 (`evidence/` + `opportunity/` + `research_graph/`，P9)
+
+```
+EvidenceScope:            CURRENT_PAPER | CROSS_PAPER（library 为兼容别名，检索器内归一化）
+EvidenceRetriever:        scope="cross_paper" 跨库检索，片段带 paper_id / paper_title
+opportunity/rules.py      3 条跨论文确定性规则：方法比较 / 矛盾 / 互补（不调 LLM）
+ResearchGraphQuery:       find_cross_paper_relationships / contradiction_hubs /
+                          complementarity_pairs（图反向驱动下一轮规划）
+ResearchNarrative:        cross_paper_sections → 报告 cross_paper_analysis 章节 +
+                          PPT "跨论文分析" 幻灯（LLM 与 fallback 双路径）
+评测:                     测评/scripts/eval_p9_cross_paper.py（4 类基准 + 引用精度，
+                          结果落 workspace/test_runs/）
+```
+
+P9 约束：不新增 Agent 类别、不加记忆层、不改 DAG——只在现有层上扩展。
+
+---
 ---
 
 ## 4. 数据流图

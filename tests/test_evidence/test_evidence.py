@@ -61,7 +61,7 @@ def test_evidence_retriever_current_paper(tmp_path):
     assert any(s.citation().startswith("[source: test-paper/text.md L") for s in pack.snippets)
 
 
-def test_evidence_retriever_cross_paper_scope(tmp_path):
+def test_evidence_retriever_cross_paper_scope_with_library_alias(tmp_path):
     first = make_paper(tmp_path / "a")
     second = make_paper(tmp_path / "b", paper_id="second-paper")
     retriever = EvidenceRetriever(KnowledgeBase(tmp_path / "kb"))
@@ -69,6 +69,8 @@ def test_evidence_retriever_cross_paper_scope(tmp_path):
     retriever.index_paper(second)
     pack = retriever.retrieve("adaptive memory retrieval", scope="library", top_k=5)
     assert {s.paper_id for s in pack.snippets} == {"test-paper", "second-paper"}
+    # ``library`` is a compatibility alias; the public API reports cross_paper.
+    assert pack.scope == "cross_paper"
 
 
 def test_retrieval_failure_marks_low_recall(tmp_path):

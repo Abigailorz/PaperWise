@@ -18,7 +18,11 @@ class StructureType(str, Enum):
 
 
 class EvidenceScope(str, Enum):
-    """P9.1 — Retrieval scope: single paper or cross-paper library."""
+    """P9.1 — Retrieval scope: current paper or cross-paper library.
+
+    ``library`` is accepted by the retriever as a backward-compatible alias
+    for ``cross_paper`` but the public API always reports ``cross_paper``.
+    """
 
     CURRENT_PAPER = "current_paper"
     CROSS_PAPER = "cross_paper"

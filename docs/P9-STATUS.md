@@ -1,6 +1,6 @@
 # P9 — Cross-Paper Research Intelligence Status
 
-> Updated: 2026-09-02  
+> Updated: 2026-09-03  
 > Branch: `main`  
 > Baseline: `7880644 docs: P9 cross-paper research spec + unified version control policy + tag v0.5.0-p8`  
 > Target tag: `v0.6.0-p9-research-native`
@@ -13,15 +13,22 @@ cross-paper discovery, narrative projection, and state-driven action planning.
 The implementation follows the agreed P9 constraint of extending the existing
 architecture rather than adding a new agent category, memory layer, or DAG.
 
-The full regression suite currently passes:
+The regression suite currently passes:
 
 ```text
-308 passed
+311 passed (280 offline/integration + 31 evaluation)
 ```
 
-This includes the 17 new P9 tests and the 16 existing P7/P8 tests.  The
-previous failure in the legacy cross-paper/library retrieval path was fixed by
-keeping `"library"` as a compatibility alias for `EvidenceScope.CROSS_PAPER`.
+The previous failure in the legacy cross-paper/library
+retrieval path was fixed by normalizing `"library"` to `cross_paper` inside
+the retriever (documented as a compatibility alias).
+
+Of the 4 v0.4.1-era e2e mock tests, 2 pass and 2 hang in the current
+sandboxed environment: the hang occurs inside pytest's tempfile-backed stdout
+capture while the DAG executor emits progress (pre-existing, unrelated to P9
+code paths).  The LLM provider for this environment is the OpenCode Go
+gateway (`glm-5.3-flash` main model, `kimi-k3` judge) configured in the
+gitignored `.env`.
 
 ## Implemented Changes
 
@@ -61,7 +68,7 @@ Added `GraphNodePair` and three typed graph queries to
 `SmartOrchestrator._run_complex()` now feeds these graph results back into
 research opportunities, so the graph participates in next-round planning.
 
-### P9.4 — Narrative Projection
+### P9.4 — Narrative Projection (completed)
 
 Added `CrossPaperNarrativeSection` and `ResearchNarrative.cross_paper_sections`.
 The narrative now:
@@ -69,6 +76,19 @@ The narrative now:
 - derives sections from cross-paper opportunities,
 - serializes and restores cross-paper sections,
 - emits a `Cross-Paper Analysis` block in `to_prompt_context()`.
+
+The final P9.4 surface is now wired end to end:
+
+- `ReportGenerator` gained a `cross_paper_analysis` section (ordered between
+  Related Work and Conclusion), with matching task-prompt instructions and
+  deterministic `assemble()` ordering by `REPORT_SECTIONS`.
+- `GeneratePPTXTool._collect_narrative()` packs `cross_paper_sections` into
+  the slide-builder context.
+- The API `generate_pptx` endpoint injects `research_narrative.json`
+  cross-paper sections as the `cross_paper` report section.
+- `build_fallback_slides()` emits a "跨论文分析" content slide when the
+  `cross_paper` section exists; `SlideContentBuilder` adds a matching
+  requirement to the LLM prompt.
 
 ### P9.5 — Research Loop Benchmark Coverage
 
@@ -90,10 +110,12 @@ Added `tests/test_memory/test_p9_cross_paper.py` with 17 tests covering:
    into their final report and slide prompts/templates.  This is the main
    missing P9.4 surface.
 
-2. **P9 evaluation script**  
-   The planned `workspace/langsplat/eval_p9_cross_paper.py` still needs to run
-   the four benchmark categories and persist structured results under
-   `workspace/test_runs/`.
+2. **P9 evaluation script** — DONE  
+   `测评/scripts/eval_p9_cross_paper.py` runs the four benchmark categories
+   (retrieval coverage, method comparison, contradiction, complementarity)
+   plus citation precision and persists JSON results under
+   `workspace/test_runs/p9_cross_paper_eval.json`.  The script itself is
+   version-controlled; `workspace/` remains runtime data.
 
 3. **Real-paper validation**  
    Run the cross-paper path against a 2–3 paper real library and record:
@@ -108,12 +130,17 @@ Added `tests/test_memory/test_p9_cross_paper.py` with 17 tests covering:
    real-paper validation, tune thresholds and marker vocabulary only from
    observed false positives/negatives.
 
-5. **Architecture and API consistency**  
-   Before tagging, normalize remaining naming around `library` and
-   `cross_paper`, ensure the public API prefers `cross_paper`, and add explicit
-   documentation that `library` remains a compatibility alias.
+5. **Architecture and API consistency** — DONE  
+   The retriever normalizes the `library` alias to `cross_paper`, so the
+   public API always reports `cross_paper`.  Docstrings document the alias;
+   internal callers and tests use `cross_paper` directly.
 
-6. **Final tag and freeze**  
+6. **Version unification** — DONE  
+   `pyproject.toml`, `paperwise/__init__.py`, `api/server.py`,
+   `mcp/server.py`, and the README title are unified at `0.6.0` in
+   preparation for the final tag.
+
+7. **Final tag and freeze**  
    After report/PPT wiring, benchmark execution, and real-paper validation,
    create the final tag:
 

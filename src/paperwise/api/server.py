@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
         await Scheduler.instance().stop()
 
 
-app = FastAPI(title="PaperWise API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="PaperWise API", version="0.6.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # 全局 Session 管理
@@ -83,7 +83,7 @@ def _fire_scheduler_event(sid: str, event: dict) -> None:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
 
 
 @app.get("/api/research-graph")
@@ -294,6 +294,24 @@ async def generate_pptx(paper_dir: str = Query(...)):
     paper_text = ""
     if (pd / "text.md").exists():
         paper_text = (pd / "text.md").read_text(encoding="utf-8", errors="replace").strip()
+
+    narrative_path = pd / "research_narrative.json"
+    if narrative_path.exists():
+        try:
+            narrative = json.loads(narrative_path.read_text(encoding="utf-8"))
+            cross_sections = narrative.get("cross_paper_sections") or []
+            if cross_sections:
+                lines = []
+                for cs in cross_sections[:5]:
+                    lines.append(
+                        f"- [{cs.get('section_type', '')}] {cs.get('title', '')}: "
+                        f"{cs.get('content', '')}"
+                    )
+                    if cs.get("source_papers"):
+                        lines.append(f"  papers: {', '.join(cs['source_papers'][:3])}")
+                sections["cross_paper"] = "\n".join(lines)[:8000]
+        except Exception:
+            pass
 
     title = meta.get("title", pd.name)
     deck = None

@@ -20,7 +20,7 @@ def make_pack(query, snippets, low_recall=False):
     return EvidencePack(
         query=query,
         snippets=snippets,
-        scope="library",
+        scope="cross_paper",
         retrieval_queries=[query],
         low_recall=low_recall,
     )

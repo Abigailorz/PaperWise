@@ -114,9 +114,16 @@ class EvidenceRetriever:
         min_score: float = 0.01,
         structure_types: Optional[Iterable[StructureType]] = None,
     ) -> EvidencePack:
-        """Retrieve snippets for the current paper or the user's paper library."""
+        """Retrieve snippets for the current paper or across the paper library.
+
+        Scope accepts ``current_paper`` or ``cross_paper``. ``library`` is a
+        backward-compatible alias for ``cross_paper`` and is normalized here,
+        so the public API always reports ``cross_paper``.
+        """
         if not query.strip():
             return EvidencePack(query=query, scope=scope, low_recall=True)
+        if scope == "library":
+            scope = "cross_paper"
         paper_id = Path(paper_dir).name if paper_dir else None
         queries = self._expanded_queries(query)
         seen: dict[str, EvidenceSnippet] = {}
@@ -134,7 +141,7 @@ class EvidenceRetriever:
                     used_fallback = bool(candidates)
                 for chunk in candidates:
                     self._ingest_chunk(chunk, seen, structure_types)
-            elif scope in ("cross_paper", "library"):
+            elif scope == "cross_paper":
                 # P9.1: query the KB without paper filter; metadata paper_id
                 # already tags each chunk's source paper.
                 candidates = self.kb.search_chunks(retrieval_query, top_k=top_k * 4)

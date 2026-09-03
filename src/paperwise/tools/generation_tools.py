@@ -122,6 +122,7 @@ class GeneratePPTXTool(BaseTool):
                     "questions": narrative.get("questions_summary", []),
                     "actions": narrative.get("actions_summary", []),
                     "evidence": narrative.get("evidence_snippets", []),
+                    "cross_paper_sections": narrative.get("cross_paper_sections", []),
                 },
                 ensure_ascii=False,
             )[:8000]

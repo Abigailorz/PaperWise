@@ -75,6 +75,13 @@ class SlideContentBuilder:
                 ctx_parts.append(f"[{name}]\n{str(content)[:5000]}")
         context = "\n\n".join(ctx_parts)
         system = self._skill_system(paper_text, title)
+        extra_requirements = ""
+        if (report_sections or {}).get("cross_paper"):
+            extra_requirements = (
+                "8. 若上下文包含 [cross_paper] 跨论文分析内容，请增加 1–2 页跨论文"
+                "对比页（方法对比/矛盾/互补，用 content 或 two_column 呈现，"
+                "标注来源论文）；\n"
+            )
 
         prompt = f"""你是资深学术 PPT 设计师。请把下面这篇论文整理成一份 10–15 页的演示文稿大纲。
 
@@ -120,6 +127,7 @@ class SlideContentBuilder:
 6. 版式要有节奏变化，不要所有内容页都用同一种卡片模板，按证据类型选择版式；
 7. slides 总数 10–15 页，其中 diagram/chart/flow/grid/two_by_two 至少出现 3 种。
 
+{extra_requirements}
 论文内容：
 {context}
 
@@ -230,6 +238,7 @@ def build_fallback_slides(paper_data: dict) -> dict:
         ("methodology", "核心方法"),
         ("experiments", "实验与结果"),
         ("related_work", "相关工作"),
+        ("cross_paper", "跨论文分析"),
         ("conclusion", "总结与展望"),
     ]
     for key, heading in order:
