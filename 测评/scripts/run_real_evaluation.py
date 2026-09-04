@@ -66,12 +66,14 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
    all_runs = []
    for sc in scenarios:
        for i in range(k):
-           r = await _run_one(paper_text, title, sc, i, llm, agent_model, config_name)
+           r = await _run_one(paper_text, title, sc, i, llm, agent_model, config_name, golden)
            all_runs.append(r)
            print(
                f"  [{sc['name']} run{i + 1}] {'PASS' if r.passed else 'FAIL'} "
                f"score={r.score:.0%} steps={r.steps} legal={r.legal_rate:.0%} "
-               f"rubric={r.rubric:.2f} hall={r.hallucination.get('severity')} "
+               f"rubric={r.rubric:.2f} fact={r.fact_quality.get('factual_accuracy', 0):.2f} "
+               f"scope={r.fact_quality.get('scope_compliance', 0):.2f} "
+               f"hall={r.hallucination.get('severity')} "
                f"{r.duration:.0f}s",
                flush=True,
            )
@@ -91,6 +93,13 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
            "avg_duration": round(sum(r.duration for r in rs) / len(rs), 1),
            "avg_legal_rate": round(sum(r.legal_rate for r in rs) / len(rs), 4),
            "avg_rubric": round(sum(r.rubric for r in rs) / len(rs), 2),
+           "avg_quality": round(sum(r.quality for r in rs) / len(rs), 4),
+           "avg_efficiency": round(sum(r.efficiency for r in rs) / len(rs), 4),
+           "avg_factual_accuracy": round(sum(r.fact_quality.get("factual_accuracy", 0) for r in rs) / len(rs), 4),
+           "avg_evidence_grounding": round(sum(r.fact_quality.get("evidence_grounding", 0) for r in rs) / len(rs), 4),
+           "avg_scope_compliance": round(sum(r.fact_quality.get("scope_compliance", 0) for r in rs) / len(rs), 4),
+           "unsupported_claims_per_run": round(sum(r.fact_quality.get("unsupported_claim_count", 0) for r in rs) / len(rs), 4),
+           "timeout_rate": round(sum(r.timeout for r in rs) / len(rs), 4),
        }
 
    n = len(all_runs)
@@ -99,7 +108,7 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
    return {
        "paper_id": paper_id,
        "title": title,
-       "model": model,
+       "model": agent_model,
        "k": k,
        "total_runs": n,
        "passed": passed,
@@ -111,12 +120,25 @@ async def run_part_b(paper_id: str, k: int, only_scenario: int,
        "avg_legal_rate": round(sum(r.legal_rate for r in all_runs) / n, 4) if n else 0,
        "avg_tokens": round(sum(r.tokens_used for r in all_runs) / n) if n else 0,
        "per_scenario": per_scenario,
+       "quality_engineering_dimensions": {
+           "ability_score": round(p, 4),
+           "quality_score": round(sum(r.quality for r in all_runs) / n, 4) if n else 0,
+           "engineering_score": round(sum(r.efficiency for r in all_runs) / n, 4) if n else 0,
+           "scope_violation_rate": round(
+               sum(r.fact_quality.get("scope_compliance", 0) < 1 for r in all_runs) / n, 4) if n else 0,
+           "unsupported_claims_per_run": round(
+               sum(r.fact_quality.get("unsupported_claim_count", 0) for r in all_runs) / n, 4) if n else 0,
+       },
        "runs": [
            {
                "name": r.name, "passed": r.passed, "score": round(r.score, 4),
+               "quality": round(r.quality, 4), "efficiency": round(r.efficiency, 4),
+               "completed": r.completed, "timeout": r.timeout,
+               "artifact_chars": r.artifact_chars,
                "steps": r.steps, "duration": round(r.duration, 1),
                "tokens": r.tokens_used, "legal_rate": round(r.legal_rate, 4),
                "rubric": r.rubric, "hallucination": r.hallucination.get("severity"),
+               "fact_quality": r.fact_quality,
                "errors": r.errors[:4], "details": r.details[:4],
                "trace": r.trace,
            }

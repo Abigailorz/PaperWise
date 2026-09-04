@@ -31,6 +31,7 @@ from paperwise.evaluation.configs import apply_config
 from paperwise.evaluation.graders import (
     CodeGrader, RubricGrader, HallucinationGrader, CitationGrader,
     TranscriptMetrics, CompositeGrader, GradeResult, Grader,
+    GroundedFactGrader,
 )
 
 TEST_DATA = PROJECT / "tests" / "test_data"
@@ -145,6 +146,8 @@ class ScenarioResult:
     name: str
     passed: bool = False
     score: float = 0.0
+    quality: float = 0.0
+    efficiency: float = 0.0
     steps: int = 0
     duration: float = 0.0
     tool_stats: dict = field(default_factory=dict)
@@ -152,6 +155,10 @@ class ScenarioResult:
     legal_rate: float = 0.0
     rubric: float = 0.0
     hallucination: dict = field(default_factory=dict)
+    fact_quality: dict = field(default_factory=dict)
+    completed: bool = True
+    timeout: bool = False
+    artifact_chars: int = 0
     details: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     trace: dict = field(default_factory=dict)
@@ -194,6 +201,10 @@ AGENT_SCENARIOS = [
 def _collect_text(workspace):
     parts = []
     for p in workspace.rglob("*.md"):
+        # text.md is evidence, not output.  Report files under paper/ are agent
+        # artifacts because the evaluation workspace root is paper/.
+        if p.name == "text.md":
+            continue
         try:
             parts.append(p.read_text(encoding="utf-8", errors="replace"))
         except Exception:
@@ -201,7 +212,10 @@ def _collect_text(workspace):
     return "\n".join(parts)
 
 
-async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str = "full"):
+async def _run_one(
+    paper_text, title, sc, run_idx, llm, model,
+    config_name: str = "full", golden: dict | None = None,
+):
     res = ScenarioResult(name=sc["name"])
     t0 = time.time()
     base = Path(get_settings().workspace_dir) / "eval_runs"
@@ -231,14 +245,21 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     try:
         ar = await asyncio.wait_for(agent.run(task), timeout=sc.get("timeout", 180))
     except asyncio.TimeoutError:
-        res.errors.append("timeout"); res.duration = time.time() - t0; return res
+        res.completed = False
+        res.timeout = True
+        res.duration = time.time() - t0
+        ar = None
     except Exception as e:
-        res.errors.append(f"exception:{type(e).__name__}:{e}"); res.duration = time.time() - t0; return res
+        res.completed = False
+        res.errors.append(f"exception:{type(e).__name__}:{e}")
+        res.duration = time.time() - t0
+        ar = None
 
-    res.duration = time.time() - t0
-    res.steps = ar.steps
-    res.tool_stats = dict(ar.tool_stats)
-    res.tokens_used = agent.state.tokens_used
+    if ar is not None:
+        res.duration = time.time() - t0
+        res.steps = ar.steps
+        res.tool_stats = dict(ar.tool_stats)
+        res.tokens_used = getattr(ar, "tokens_used", 0)
 
     # Basic observability trace: tool call sequence, message role counts, token distribution
     tool_sequence = []
@@ -263,8 +284,21 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
                 bad_tool += 1
     res.legal_rate = (total_tool - bad_tool) / total_tool if total_tool else 1.0
 
-    final = ar.final_output or ""
+    # Assemble deterministic report fallback before quality grading so a timed
+    # out run can still contribute a partial, reviewable artifact.
+    try:
+        from paperwise.generators.report import ReportGenerator
+        _rp = paper_dir / "report" / "report.md"
+        _mc = sc.get("min_report_chars", 0)
+        if _mc and (not _rp.exists()
+                    or len(_rp.read_text(encoding="utf-8", errors="replace")) < _mc):
+            ReportGenerator(paper_dir).assemble(paper_dir)
+    except Exception:
+        pass
+
+    final = ar.final_output or "" if ar is not None else ""
     all_content = final + "\n" + _collect_text(workspace)
+    res.artifact_chars = len(all_content.strip())
 
     # === Integrated grading using CompositeGrader ===
     judge_llm = get_settings().build_judge_llm()
@@ -276,13 +310,13 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
         min_output_chars=sc.get("min_report_chars", 0),
     )
 
-    hallucination_grader = HallucinationGrader(judge_llm)
+    grounded_fact_grader = GroundedFactGrader(judge_llm)
     transcript_metrics = TranscriptMetrics()
 
     graders: list[tuple[Grader, float]] = [
-        (code_grader, 0.45),
+        (code_grader, 0.35),
         (transcript_metrics, 0.25),
-        (hallucination_grader, 0.30),  # hallucination is a veto; any fail fails the task
+        (grounded_fact_grader, 0.40),
     ]
 
     if sc["name"] in ("critical_analysis", "report_generation"):
@@ -301,6 +335,7 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
         "paper_text": paper_text,
         "workspace": paper_dir,
         "scenario": sc,
+        "golden": golden,
     }
 
     grade_result: GradeResult = await composite.grade(all_content, context)
@@ -309,26 +344,20 @@ async def _run_one(paper_text, title, sc, run_idx, llm, model, config_name: str 
     res.passed = grade_result.passed
     res.details = grade_result.details
     res.errors = grade_result.errors
-    res.hallucination = grade_result.raw.get("HallucinationGrader", {})
+    res.quality = round(grade_result.score, 4)
+    res.fact_quality = grade_result.raw.get("GroundedFactGrader", {})
+    res.hallucination = {
+        "severity": res.fact_quality.get("factual_severity", "none"),
+        "factual_veto": res.fact_quality.get("factual_veto", False),
+        "unsupported_claim_count": res.fact_quality.get("unsupported_claim_count", 0),
+        "scope_compliance": res.fact_quality.get("scope_compliance", 1.0),
+    }
     res.rubric = grade_result.raw.get("RubricGrader", {}).get("overall_score", 0.0)
-
-    # Hallucination veto: if hallucination failed, force fail regardless of score
-    hall_raw = grade_result.raw.get("HallucinationGrader", {})
-    if hall_raw.get("severity") in ("critical", "major"):
-        res.passed = False
-        if not any("hallucination" in e for e in res.errors):
-            res.errors.append(f"hallucination:{hall_raw.get('severity')}")
-
-    # Deterministic fallback: if agent didn't write a valid report, assemble sections
-    try:
-        from paperwise.generators.report import ReportGenerator
-        _rp = paper_dir / "report" / "report.md"
-        _mc = sc.get("min_report_chars", 0)
-        if _mc and (not _rp.exists()
-                    or len(_rp.read_text(encoding="utf-8", errors="replace")) < _mc):
-            ReportGenerator(paper_dir).assemble(paper_dir)
-    except Exception:
-        pass
+    timeout_ratio = min(res.duration / max(sc.get("timeout", 180), 1), 1.0)
+    res.efficiency = round(
+        0.50 * int(res.completed) + 0.25 * res.legal_rate + 0.25 * (1.0 - timeout_ratio),
+        4,
+    )
 
 
 
@@ -349,11 +378,13 @@ async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name
     all_runs = []
     for sc in scenarios:
         for i in range(k):
-            r = await _run_one(paper_text, title, sc, i, llm, model, config_name)
+            r = await _run_one(paper_text, title, sc, i, llm, model, config_name, truth)
             all_runs.append(r)
             print(f"  [{sc['name']} run{i+1}] {'PASS' if r.passed else 'FAIL'} "
                   f"score={r.score:.0%} steps={r.steps} legal={r.legal_rate:.0%} "
-                  f"rubric={r.rubric:.2f} hall={r.hallucination.get('severity')} {r.duration:.0f}s")
+                  f"rubric={r.rubric:.2f} fact={r.fact_quality.get('factual_accuracy', 0):.2f} "
+                  f"scope={r.fact_quality.get('scope_compliance', 0):.2f} "
+                  f"hall={r.hallucination.get('severity')} {r.duration:.0f}s")
 
     by_name = {}
     for r in all_runs:
@@ -368,7 +399,14 @@ async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name
             "avg_steps": round(sum(r.steps for r in rs) / len(rs), 1),
             "avg_duration": round(sum(r.duration for r in rs) / len(rs), 1),
             "avg_legal_rate": round(sum(r.legal_rate for r in rs) / len(rs), 4),
-            "avg_rubric": round(sum(r.rubric for r in rs) / len(rs), 2)}
+            "avg_rubric": round(sum(r.rubric for r in rs) / len(rs), 2),
+            "avg_quality": round(sum(r.quality for r in rs) / len(rs), 4),
+            "avg_efficiency": round(sum(r.efficiency for r in rs) / len(rs), 4),
+            "avg_factual_accuracy": round(sum(r.fact_quality.get("factual_accuracy", 0) for r in rs) / len(rs), 4),
+            "avg_evidence_grounding": round(sum(r.fact_quality.get("evidence_grounding", 0) for r in rs) / len(rs), 4),
+            "avg_scope_compliance": round(sum(r.fact_quality.get("scope_compliance", 0) for r in rs) / len(rs), 4),
+            "unsupported_claims_per_run": round(sum(r.fact_quality.get("unsupported_claim_count", 0) for r in rs) / len(rs), 4),
+            "timeout_rate": round(sum(r.timeout for r in rs) / len(rs), 4)}
 
     n = len(all_runs)
     passed = sum(1 for r in all_runs if r.passed)
@@ -383,10 +421,23 @@ async def run_part_b(paper, k, only_scenario, model="deepseek-chat", config_name
         "avg_legal_rate": round(sum(r.legal_rate for r in all_runs) / n, 4),
         "avg_tokens": round(sum(r.tokens_used for r in all_runs) / n),
         "per_scenario": per_scenario,
+        "quality_engineering_dimensions": {
+            "ability_score": round(p, 4),
+            "quality_score": round(sum(r.quality for r in all_runs) / n, 4),
+            "engineering_score": round(sum(r.efficiency for r in all_runs) / n, 4),
+            "scope_violation_rate": round(
+                sum(r.fact_quality.get("scope_compliance", 0) < 1 for r in all_runs) / n, 4),
+            "unsupported_claims_per_run": round(
+                sum(r.fact_quality.get("unsupported_claim_count", 0) for r in all_runs) / n, 4),
+        },
         "runs": [{"name": r.name, "passed": r.passed, "score": round(r.score, 4),
+                  "quality": round(r.quality, 4), "efficiency": round(r.efficiency, 4),
+                  "completed": r.completed, "timeout": r.timeout,
+                  "artifact_chars": r.artifact_chars,
                   "steps": r.steps, "duration": round(r.duration, 1),
                   "tokens": r.tokens_used, "legal_rate": round(r.legal_rate, 4),
                   "rubric": r.rubric, "hallucination": r.hallucination.get("severity"),
+                  "fact_quality": r.fact_quality,
                   "errors": r.errors[:4], "details": r.details[:4],
                   "trace": r.trace} for r in all_runs]}
 

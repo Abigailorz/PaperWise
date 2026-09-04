@@ -163,7 +163,7 @@ Grader 设计：
 | 关键字符串命中 | Code-based | 检查 golden answer 中的关键词是否出现 |
 | 代码可执行性 | Code-based | `code_interpreter` 执行的代码能返回预期结果 |
 | Rubric 打分 | Model-based | Kimi K3 按预定义 rubric 对回答/报告打分 |
-| 幻觉检测 | Model-based | Kimi K3 判断输出是否包含 paper 中不存在的信息 |
+| Grounded Fact Quality | Model-based | 分别打分 factual accuracy、evidence grounding、answer scope，并记录 unsupported claims |
 | 工具调用检查 | Transcript | 是否调用了期望工具、是否有重复调用 |
 | 效率指标 | Transcript | steps、tokens、legal tool rate |
 
@@ -247,12 +247,57 @@ class AgentConfig:
 |------|----------|
 | 显式 Plan 能提升任务完成率 | 对比 `paperwise-full` vs `paperwise-no-plan` |
 | Budget-aware 能减少冗余探索 | 对比 steps / tokens、是否在 budget 耗尽前收敛 |
-| Judge review 能降低幻觉 | 对比 hallucination rate |
+| Judge review 能降低事实错误 | 对比 factual accuracy 与 unsupported claim 分离统计 |
 | HierarchicalMemory 能在长 paper 上保持 recall | 对比长论文场景下的内容覆盖率 |
 
 ---
 
 ## 指标与输出格式
+
+### 评测指标口径（v2）
+
+六个场景不再只被理解成六次 PASS/FAIL，而是按三个维度重组：
+
+| 维度 | 场景 / 指标 | 判定原则 |
+|------|--------------|----------|
+| **能力维度** | `basic_info_extraction`、`method_verification`、`critical_analysis` | Agent 能否完成定位、解释和推理任务；`critical_analysis` 单独看 reasoning quality |
+| **质量维度** | `numerical_fact_verification`、`hallucination_veto`、`report_generation` 的报告质量 | 数值必须真实且有证据；正确拒答和拒答后过度展开分开计分 |
+| **工程维度** | `completed`、`timeout`、steps、tokens、legal tool rate、efficiency | 长任务超时不等于产出为 0；已生成的报告文件必须参与评分 |
+
+`Grounded Fact Quality` 把旧的单一 hallucination veto 拆成四个信号：
+
+```json
+{
+  "factual_accuracy": 0.95,
+  "evidence_grounding": 1.0,
+  "scope_compliance": 0.75,
+  "unsupported_claims": 1
+}
+```
+
+关键规则：只有 `factual_error` 才能触发事实否决；`scope_violation` 只降低
+scope compliance，不再把论文中真实存在的补充细节误判成幻觉。这样可以避免
+“Agent 越少说话分数越高”的伪优化。
+
+`hallucination_veto` 也采用同样规则：正确说出“论文未报告该指标”是事实
+正确；若随后列出额外指标，只会降低 scope compliance，不应因为额外展开而
+判成伪造目标指标。
+
+`report_generation` 单独保留 quality 与 efficiency：
+
+```json
+{
+  "quality": 0.86,
+  "efficiency": 0.42,
+  "completed": false,
+  "timeout": true,
+  "artifact_chars": 4200
+}
+```
+
+超时时评分器会读取 `report/report.md` 和 `report/sections/*.md`，对已经落盘
+的中间产物继续评 quality；timeout 只进入 engineering 维度，不再自动把 score
+置为 0。
 
 ### 单次 trial 指标
 
@@ -262,12 +307,22 @@ class AgentConfig:
   "paper_id": "feature3dgs_2312.03203",
   "passed": true,
   "score": 0.75,
+  "quality": 0.86,
+  "efficiency": 0.72,
+  "completed": true,
+  "timeout": false,
   "steps": 5,
   "tokens_used": 3200,
   "duration": 18.5,
   "legal_rate": 1.0,
   "rubric": 2.5,
-  "hallucination": {"severity": "none", "summary": ""},
+  "hallucination": {"severity": "none", "unsupported_claim_count": 0, "scope_compliance": 1.0},
+  "fact_quality": {
+    "factual_accuracy": 0.95,
+    "evidence_grounding": 1.0,
+    "scope_compliance": 1.0,
+    "unsupported_claim_count": 0
+  },
   "details": [...],
   "errors": []
 }
@@ -291,6 +346,13 @@ class AgentConfig:
   "avg_duration": 42.1,
   "avg_legal_rate": 0.96,
   "avg_rubric": 2.3,
+  "quality_engineering_dimensions": {
+    "ability_score": 0.7778,
+    "quality_score": 0.82,
+    "engineering_score": 0.71,
+    "scope_violation_rate": 0.22,
+    "unsupported_claims_per_run": 0.6
+  },
   "per_scenario": {...}
 }
 ```
@@ -299,7 +361,7 @@ class AgentConfig:
 
 - 各配置 Pass@k 对比柱状图
 - 各配置 avg tokens / steps 对比图
-- 幻觉率雷达图（按 scenario）
+- factual accuracy / grounding / scope compliance 雷达图（按 scenario）
 - 报告 rubric 分数分布
 
 ---
@@ -312,12 +374,12 @@ class AgentConfig:
 - [x] 修复 `run_evaluation.py` PPT 生成引用
 - [x] 修复 `parse_papers.py` / `run_real_evaluation.py` 路径
 - [ ] 统一评测入口：`paperwise eval` 或 `python -m 测评.scripts.eval`
-- [ ] 抽象 Grader 接口：`CodeGrader`、`RubricGrader`、`HallucinationGrader`、`TranscriptMetrics`
+- [x] 抽象 Grader 接口：`CodeGrader`、`RubricGrader`、`GroundedFactGrader`、`TranscriptMetrics`
 
 ### Phase 2：可重复真实论文评测
 
 - [ ] 标准化 golden dataset schema
-- [ ] 实现 Tier 3 多 grader 流水线
+- [x] 实现 Tier 3 多 grader 流水线
 - [ ] 生成标准 JSON / Markdown report
 - [ ] 支持 `--config full|no-plan|no-budget|no-judge|no-memory|baseline`
 

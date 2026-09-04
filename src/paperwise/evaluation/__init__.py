@@ -2,6 +2,7 @@
 
 from paperwise.evaluation.rubric import RubricDimension, EvaluationResult, RubricEvaluator
 from paperwise.evaluation.hallucination import HallucinationDetector
+from paperwise.evaluation.fact_quality import GroundedFactDetector, GroundedFactGrader
 from paperwise.evaluation.graders import (
     Grader, GradeResult, CodeGrader, RubricGrader,
     HallucinationGrader, TranscriptMetrics, CompositeGrader,
@@ -15,7 +16,8 @@ from paperwise.evaluation.trace_evaluator import (
 from paperwise.evaluation.benchmark import PassKEvaluator, AblationTester, EvalRun, BenchmarkResult
 
 __all__ = [
-    "RubricEvaluator", "HallucinationDetector", "RubricDimension", "EvaluationResult",
+    "RubricEvaluator", "HallucinationDetector", "GroundedFactDetector",
+    "GroundedFactGrader", "RubricDimension", "EvaluationResult",
     "Grader", "GradeResult", "CodeGrader", "RubricGrader",
     "HallucinationGrader", "TranscriptMetrics", "CompositeGrader",
     "TraceStore", "TraceEvaluator", "TraceMetricsExtractor",
