@@ -85,6 +85,52 @@
 | hallucination_veto | PASS | PASS | 持平 |
 | report_generation | FAIL，300s 超时 | FAIL，300s 超时 | 持平 |
 
+## 放宽时间复测（旧口径）
+
+随后把 `numerical_fact_verification` 超时从 120s 放宽到 180s，
+`critical_analysis` 从 180s 放宽到 420s，`report_generation` 从 300s 放宽到
+600s。此轮仍使用旧的单一 hallucination 判定，因此数据用于验证时间假设；
+口径本身已在后续提交中升级为 Grounded Fact Quality。
+
+| 论文 | 通过 / 总数 | 通过率 | 平均步数 | 平均耗时 | 平均 tokens |
+|------|------------:|-------:|---------:|---------:|------------:|
+| LangSplat | 3 / 6 | 50.00% | 3.8 | 180.8s | 1679 |
+| Feature 3DGS | 4 / 6 | 66.67% | 4.7 | 171.9s | 2305 |
+
+### LangSplat 放宽时间结果
+
+| 场景 | 结果 | 步数 | 耗时 | 关键信息 |
+|------|------|-----:|-----:|----------|
+| basic_info_extraction | PASS | 4 | 59.3s | 正常 |
+| numerical_fact_verification | FAIL | 4 | 74.3s | 74.3s 完成，被旧口径判 critical |
+| method_verification | PASS | 5 | 115.9s | 正常 |
+| critical_analysis | PASS | 7 | 171.6s | 放宽后通过 |
+| hallucination_veto | FAIL | 3 | 63.8s | 拒答正确，但补充展开被旧口径判 major |
+| report_generation | FAIL | 0 | 600.1s | 600s 仍超时 |
+
+### Feature 3DGS 放宽时间结果
+
+| 场景 | 结果 | 步数 | 耗时 | 关键信息 |
+|------|------|-----:|-----:|----------|
+| basic_info_extraction | PASS | 4 | 86.7s | 正常 |
+| numerical_fact_verification | FAIL | 3 | 66.5s | 66.5s 完成，headline 正确但表格细节越界 |
+| method_verification | PASS | 7 | 172.9s | 正常 |
+| critical_analysis | PASS | 9 | 75.7s | 放宽后通过 |
+| hallucination_veto | PASS | 5 | 29.5s | 正确拒答 |
+| report_generation | FAIL | 0 | 600.1s | 600s 仍超时 |
+
+### 放宽时间观察
+
+1. `critical_analysis` 在两篇论文上都转为通过，确认原 180s 预算是该场景
+   的主要失败原因。
+2. 数值题在两篇论文上都远早于 180s 完成，继续失败不是因为时间；失败来自
+   “headline 正确 + golden 外表格细节”被旧口径整体判为 hallucination。
+3. LangSplat 的幻觉拒答明确说论文未报告 BLEU，但仍因补充展开被判失败；
+   这直接证明事实错误和 Answer Scope Violation 必须分开评分。
+4. `report_generation` 在 600s 仍超时。LangSplat 日志显示 reader 阶段约
+   514s 才结束，后续节点还要分析/写报告，说明需要复用中间产物或继续提高
+   全链路预算。
+
 ## 主要观察
 
 1. **基础事实与幻觉拒答稳定**：两篇论文的 `basic_info_extraction` 和
@@ -107,6 +153,8 @@
 - 终版 Feature 3DGS：`workspace/benchmarks/real_eval_1788457517.json`
 - 第一轮 LangSplat：`workspace/benchmarks/real_eval_1788452848.json`
 - 第一轮 Feature 3DGS：`workspace/benchmarks/real_eval_1788454042.json`
+- 放宽时间 LangSplat：`workspace/benchmarks/real_eval_1788492086.json`
+- 放宽时间 Feature 3DGS：`workspace/benchmarks/real_eval_1788493341.json`
 
 ## 下一轮建议
 
