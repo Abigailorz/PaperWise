@@ -1,4 +1,4 @@
-# PaperWise — AI 学术论文智能解读系统 v0.8.0
+# PaperWise — AI 学术论文智能解读系统 v0.9.0
 
 基于《深入理解 AI Agent：设计原理与工程实践》全书知识体系构建。
 
@@ -23,7 +23,7 @@ paperwise generate pptx workspace/{paper}/     # 生成 PPT
 paperwise evaluate report.md workspace/{paper}/ # 评估质量
 
 # 4. 运行测试
-pytest tests/ -v                               # 311 个单元/集成测试（另有 4 个 e2e 真实 LLM 测试）
+pytest tests/ -q                               # 342 个单元/集成测试
 python tests/run_agent_tests.py                # Agent 能力测试
 ```
 
@@ -75,7 +75,7 @@ paperwise pipeline paper.pdf                      # 端到端流水线（含对�
 
 ```
 PaperWise/
-├── src/paperwise/              ← 56 个 Python 文件 (~9000 行)
+├── src/paperwise/              ← 123 个 Python 文件
 │   ├── core/                   # Agent 核心 (ReAct, LLM客户端, Session)
 │   ├── harness/                # Harness 工程 (5层压缩, 3层护栏, 状态栏)
 │   ├── tools/                  # 17 工具五类 (感知/执行/协作/事件/沟通)
@@ -90,11 +90,12 @@ PaperWise/
 │   ├── cli/                    # CLI (Typer + Rich)
 │   └── config/                 # 配置 (25 项可配置)
 ├── skills/                     # Skill 定义 (Markdown)
-├── tests/                      # 311 单元/集成测试 + Agent 能力测试 + MCP 集成脚本
+├── tests/                      # 64 个测试文件 / 342 项测试 + Agent 能力测试 + MCP 集成脚本
 │   └── test_data/              # 测试数据集
 ├── 测评/                       # 测评设计 / 结果 / 金标 / 消融实验 / 复现脚本
 ├── docs/                       # 文档
 │   ├── 项目全景解析.md           # 完整项目解析（推荐先读）
+│   ├── TESTING-STANDARD-AND-RESULTS.md  # 测试标准、场景细则与结果报告
 │   ├── 逐文件解读.md             # 每个文件的作用说明
 │   ├── ARCHITECTURE.md         # 完整架构文档
 │   ├── AUDIT.md                # 技术审计报告
@@ -129,6 +130,17 @@ RAG: Dense + Sparse + RRF + Cross-Encoder + HyDE + RAPTOR + GraphRAG
 记忆: Advanced JSON Cards + LLM提取 + 自动去重 + 兴趣画像（主动推荐）
 评估: Rubric + 幻觉检测（异源 Judge）+ Pass@k/Pass^k + 消融实验
 ```
+
+## 当前测试状态
+
+- 自动化回归：`342 passed`
+- 确定性安全与组件测试：`25/25 passed`
+- 真实论文场景：6 类能力场景，覆盖 LangSplat 与 Feature 3DGS
+- 评测口径：能力、质量、工程三维评价，Fact / Grounding / Scope / Unsupported Claims 分开计分
+- 当前已知限制：Feature 3DGS `report_generation` 的完整报告已落盘，但最新端到端验收在 1200s 总预算内未返回，正式 PASS 尚未闭环
+
+完整测试标准、每个场景的输入/工具/超时/判定细则，以及逐轮结果与根因分析见
+[docs/TESTING-STANDARD-AND-RESULTS.md](docs/TESTING-STANDARD-AND-RESULTS.md)。
 
 ## 技术对照（书中 20 项核心技术）
 

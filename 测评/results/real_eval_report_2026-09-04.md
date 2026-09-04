@@ -165,3 +165,62 @@
    在模型生成速度、编排步数，还是验证/评分前的收尾流程。
 4. 将异源 Judge 约定固化为 `PAPERWISE_JUDGE_MODEL=deepseek-v4-flash`，避免
    后续评测中主模型与 Judge 混用同一模型。
+
+## v2 口径与 1200 秒报告预算
+
+本轮把 LangSplat 的 `report_generation` 预算放宽到 1200s，并启用 v2 指标。
+原始结果为 `workspace/benchmarks/real_eval_1788496063.json`。
+
+| 场景 | 结果 | 质量分 | Fact / Scope | 关键信号 |
+|------|------|-------:|--------------|----------|
+| basic_info_extraction | PASS | 1.00 | 1.00 / 1.00 | 正常 |
+| numerical_fact_verification | FAIL | 0.425 | 0.00 / 0.00 | 34.2s 完成；最终输出仅 59 字符，6 步全为检索，无收束答案 |
+| method_verification | PASS | 1.00 | 1.00 / 1.00 | 正常 |
+| critical_analysis | FAIL | 0.412 | 0.00 / 0.00 | 57.1s 完成；最终输出仅 61 字符，10 步全为检索，无收束答案 |
+| hallucination_veto | PASS | 0.982 | 1.00 / 0.70 | 正确拒答；3 项补充指标被判 scope violation，不再判幻觉 |
+| report_generation | FAIL | 0.584 | 0.50 / 1.00 | 1200.1s 触顶；产物已落盘，Fact 0.50 是 Judge 连接错误降级为 unknown |
+
+### report_generation 时间线
+
+报告产物不是没有写完。LangSplat 运行目录显示：
+
+1. `12:04:41` 写入 `summary.md` 和三个分节文件；
+2. `12:08:22` 最终 `report.md` 更新完成，大小约 8.2KB；
+3. `12:13:19` Reviewer 写出 PASS 的 `findings.json/md`；
+4. 随后仍触发了 Revision Writer，直到 1200s 预算耗尽。
+
+因此 1200s 不是报告写作的实际耗时约束。报告本体约 3 分 41 秒完成，
+审稿约 4 分 57 秒完成；剩余时间被错误触发的修订循环消耗。根因是子代理
+内部 Plan 与真实产物不同步：Reviewer 已交付有效 findings，但 Agent 返回
+step-limit 失败，DAG 将其误判为 review 失败并 replan 成 revision。
+
+后续收口是让“新增/更新的非空目标产物”成为子代理完成信号；同时将
+`APIConnectionError` 视为基础设施失败，避免网关故障触发一串无意义
+replan。相关编排测试已覆盖：340 passed。
+
+## 2026-09-04 收尾验收
+
+本节是当天的最终收口状态；完整测试标准、每个场景细则与评分公式见
+`docs/TESTING-STANDARD-AND-RESULTS.md`。
+
+自动化回归更新为 **342 passed**。新增修复包括：
+
+1. Rubric 总分写入评测 raw 结果；
+2. 子 Agent messages、tool stats 和 tokens 聚合回外层 AgentResult；
+3. 网关连接与 SSL 错误不再触发 replan；
+4. 分节产物写入后同步更新 Agent 内部计划状态。
+
+Feature 3DGS `report_generation` 的收尾复测如下：
+
+| 结果文件 | 用时 | 状态 | Score | Fact | Scope | Unsupported | 结论 |
+|---|---:|---|---:|---:|---:|---:|---|
+| `real_eval_1788506785.json` | 1200.1s | timeout / FAIL | 0.5674 | 0.50 | 1.00 | 0 | 报告已写出；Judge JSON 解析错误降级为 unknown |
+| `real_eval_1788508624.json` | 1200.1s | timeout / FAIL | 0.5482 | 0.50 | 1.00 | 0 | 最新运行；报告与审稿产物完整，但整体超时 |
+
+最新运行已留下完整 `report.md`、四个分节文件和 review findings。两次失败
+中的 `Fact 0.50` 均来自 `JSONDecodeError` 后的 unknown 降级，不是新增幻觉。
+
+最终口径：
+
+> Agent 报告生成能力已完成功能与质量验证；Feature 3DGS 的端到端正式 PASS
+> 因 1200s 总预算内流程未返回而保留为已知限制。

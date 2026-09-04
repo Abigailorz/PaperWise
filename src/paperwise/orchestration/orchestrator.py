@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from paperwise.core.agent import Agent
-from paperwise.core.types import AgentConfig, AgentResult, TraceEventType
+from paperwise.core.types import AgentConfig, AgentResult, Message, TraceEventType
 from paperwise.core.plan import Plan, Task
 from paperwise.core.trace_collector import TraceCollector, create_trace_collector
 from paperwise.orchestration.classifier import TaskClassifier
@@ -100,6 +100,9 @@ class SmartOrchestrator:
       self.max_review_rounds = max_review_rounds
       self.trace_collector = trace_collector or create_trace_collector(enabled=False)
       self._current_context_xml: str = ""
+      self._sub_agent_messages: list[Message] = []
+      self._sub_agent_tool_stats: dict[str, int] = {}
+      self._sub_agent_tokens = 0
       self.evidence_retriever = EvidenceRetriever(
           KnowledgeBase(self.workspace / ".paperwise" / "default" / "evidence_kb")
       )
@@ -347,6 +350,9 @@ class SmartOrchestrator:
       state.set_artifact("research_state_id", research_state.state_id)
 
       executor = self._make_executor()
+      self._sub_agent_messages = []
+      self._sub_agent_tool_stats = {}
+      self._sub_agent_tokens = 0
 
       total_steps = 0
       final_findings = {"verdict": "UNKNOWN", "critical": 0, "major": 0, "minor": 0}
@@ -443,9 +449,11 @@ class SmartOrchestrator:
 
       result = AgentResult(
           final_output=final_text,
+          messages=list(self._sub_agent_messages),
           success=success,
           steps=total_steps,
-          tool_stats={},
+          tool_stats=dict(self._sub_agent_tool_stats),
+          tokens_used=self._sub_agent_tokens,
       )
 
       # Memory learning: record episode and procedure
@@ -523,6 +531,13 @@ class SmartOrchestrator:
           pass
 
       return result
+
+  def _record_sub_agent_trajectory(self, result: AgentResult) -> None:
+      """Accumulate observable sub-agent state lost by artifact-only DAG nodes."""
+      self._sub_agent_messages.extend(result.messages)
+      for tool, count in result.tool_stats.items():
+          self._sub_agent_tool_stats[tool] = self._sub_agent_tool_stats.get(tool, 0) + int(count)
+      self._sub_agent_tokens += max(0, int(result.tokens_used or 0))
 
   def _build_complex_plan(self, task: str) -> Plan:
       """Build the dynamic DAG for a complex paper-analysis task."""
@@ -1188,15 +1203,27 @@ class SmartOrchestrator:
       agent.on_event(self._emit)
       self._emit("agent", f"{spec.name} started · max_steps={max_steps}")
 
+      expected = paper_dir / spec.output_path
+      artifact_existed = expected.exists()
+      artifact_mtime = expected.stat().st_mtime_ns if artifact_existed else 0
+
       result = await agent.run(spec.task_template)
 
-      # Enforce artifact existence for the sub-agent.
-      expected = paper_dir / spec.output_path
+      # Enforce artifact existence for the sub-agent.  A newly created or
+      # updated non-empty artifact is authoritative even when the agent hits
+      # its step limit: internal plans may lag behind the observable file.
+      if spec.output_path and expected.is_file():
+          updated = not artifact_existed or expected.stat().st_mtime_ns > artifact_mtime
+          if updated and expected.stat().st_size > 0:
+              result.success = True
+              result.error_message = ""
       if spec.output_path and not expected.exists():
           if result.success:
               result.success = False
               result.error_message = f"missing expected artifact: {spec.output_path}"
           result.final_output = f"[Missing artifact {spec.output_path}]\n{result.final_output}"
+
+      self._record_sub_agent_trajectory(result)
 
       return result
 

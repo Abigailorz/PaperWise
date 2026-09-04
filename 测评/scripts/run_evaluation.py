@@ -31,8 +31,8 @@ from paperwise.evaluation.configs import apply_config
 from paperwise.evaluation.graders import (
     CodeGrader, RubricGrader, HallucinationGrader, CitationGrader,
     TranscriptMetrics, CompositeGrader, GradeResult, Grader,
-    GroundedFactGrader,
 )
+from paperwise.evaluation.fact_quality import GroundedFactGrader
 
 TEST_DATA = PROJECT / "tests" / "test_data"
 PAPERS = {

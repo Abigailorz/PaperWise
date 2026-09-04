@@ -162,7 +162,12 @@ class RubricGrader(Grader):
             passed=result.passed,
             score=result.overall_score / 4.0,
             details=details,
-            raw={"scores": result.scores, "details": result.details},
+            raw={
+                "scores": result.scores,
+                "overall_score": result.overall_score,
+                "passed": result.passed,
+                "details": result.details,
+            },
         )
 
 

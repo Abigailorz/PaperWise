@@ -307,13 +307,18 @@ class AgentLoopMixin:
 
       name = tool_call.name
       args = tool_call.arguments
-      path = str(args.get("path", "")).lower()
+      path = str(args.get("path", "")).replace("\\", "/").lower()
 
       if name == "read_file" and "text.md" in path and not result.is_error:
           plan.mark_done("read_paper", evidence=path)
       elif name == "write_file":
           if path.endswith("report.md"):
               plan.mark_done("generate_report", evidence=path)
+          if path.endswith(("methodology.md", "experiments.md",
+                            "method_experiments_analysis.md")):
+              plan.mark_done("analyze_method", evidence=path)
+          if path.endswith(("limitations.md", "critical_limitations_analysis.md")):
+              plan.mark_done("critical_analysis", evidence=path)
           if "analysis/plan.md" in path:
               plan.mark_in_progress("analyze_method")
       elif name == "code_interpreter" and not result.is_error:

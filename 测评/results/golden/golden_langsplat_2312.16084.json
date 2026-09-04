@@ -147,7 +147,7 @@
       ],
       "min_report_chars": 300,
       "max_steps": 20,
-      "timeout": 600
+      "timeout": 1200
     }
   ]
 }

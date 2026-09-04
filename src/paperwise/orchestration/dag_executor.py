@@ -161,6 +161,20 @@ class DAGExecutor:
             )
         return node
 
+    @staticmethod
+    def _is_fatal_infrastructure_error(error: str) -> bool:
+        """Identify provider-level failures that should not be replanned.
+
+        Replanning assumes the current node can be repaired by changing work.
+        A gateway or transport outage would fail every replacement node too.
+        """
+        error_lower = error.lower()
+        return (
+            "apiconnectionerror" in error_lower
+            or "connection error" in error_lower
+            or "ssl connection could not be established" in error_lower
+        )
+
     async def run(
         self,
         plan: Plan,
@@ -354,6 +368,9 @@ class DAGExecutor:
             task.retry_count += 1
             task.error_message = str(result)
             state.log_node(task.id, {"status": "error", "error": str(result)})
+
+            if self._is_fatal_infrastructure_error(str(result)):
+                raise DAGExecutorError(f"Infrastructure failure at {task.id}: {result}")
 
             if task.retry_count <= task.max_retries:
                 task.status = TaskStatus.PENDING
