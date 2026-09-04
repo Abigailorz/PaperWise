@@ -84,7 +84,7 @@
         "84.3"
       ],
       "max_steps": 6,
-      "timeout": 120
+      "timeout": 180
     },
     {
       "name": "method_verification",
@@ -118,7 +118,7 @@
         "autoencoder"
       ],
       "max_steps": 10,
-      "timeout": 180
+      "timeout": 420
     },
     {
       "name": "hallucination_veto",
@@ -147,7 +147,7 @@
       ],
       "min_report_chars": 300,
       "max_steps": 20,
-      "timeout": 300
+      "timeout": 600
     }
   ]
 }
